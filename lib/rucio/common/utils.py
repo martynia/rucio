@@ -662,6 +662,16 @@ def extract_scope_atlas(did, scopes):
         return scope, did
 
 
+def extract_scope_dirac(did, scopes):
+    # Default dirac scope extract algorithm. Scope is the second element in the LFN.
+    elem = did.split('/')
+    if len(elem) > 3:
+        scope = elem[2]
+    else:
+        raise RucioException('LFN should have at least 3 elements: /vo/scope/filename')
+    return scope, did
+
+
 def extract_scope_belleii(did, scopes):
     split_did = did.split('/')
     if did.startswith('/belle/MC/'):
@@ -743,12 +753,13 @@ def register_extract_scope_algorithm(extract_callable, name=[]):
 
 register_extract_scope_algorithm(extract_scope_atlas, 'atlas')
 register_extract_scope_algorithm(extract_scope_belleii, 'belleii')
+register_extract_scope_algorithm(extract_scope_dirac, 'dirac')
 
 
-def extract_scope(did, scopes=None):
+def extract_scope(did, scopes=None, default_extract=_DEFAULT_EXTRACT):
     extract_scope_convention = config_get('common', 'extract_scope', False, None)
     if extract_scope_convention is None or extract_scope_convention not in _EXTRACT_SCOPE_ALGORITHMS:
-        extract_scope_convention = _DEFAULT_EXTRACT
+        extract_scope_convention = default_extract
     return _EXTRACT_SCOPE_ALGORITHMS[extract_scope_convention](did=did, scopes=scopes)
 
 
