@@ -665,7 +665,7 @@ def extract_scope_atlas(did, scopes):
 def extract_scope_dirac(did, scopes):
     # Default dirac scope extract algorithm. Scope is the second element in the LFN.
     elem = did.split('/')
-    if len(elem) > 3:
+    if len(elem) > 2:
         scope = elem[2]
     else:
         raise RucioException('LFN should have at least 3 elements: /vo/scope/filename')
