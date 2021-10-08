@@ -40,6 +40,7 @@
 # - Ilija Vukotic <ivukotic@cern.ch>, 2021
 # - David Población Criado <david.poblacion.criado@cern.ch>, 2021
 # - Joel Dierkes <joel.dierkes@cern.ch>, 2021
+# - Janusz Martyniak <janusz.martyniak@imperial.ac.uk>, 2021
 
 from __future__ import absolute_import, print_function
 
@@ -741,6 +742,16 @@ def extract_scope_atlas(did, scopes):
         return scope, did
 
 
+def extract_scope_dirac(did, scopes):
+    # Default dirac scope extract algorithm. Scope is the second element in the LFN or the first one (VO name)
+    # if only one element is the result of a split.
+    elem = did.rstrip('/').split('/')
+    if len(elem) > 2:
+        scope = elem[2]
+    else:
+        scope = elem[1]
+    return scope, did
+
 def extract_scope_belleii(did, scopes):
     split_did = did.split('/')
     if did.startswith('/belle/MC/'):
@@ -822,6 +833,7 @@ def register_extract_scope_algorithm(extract_callable, name=[]):
 
 register_extract_scope_algorithm(extract_scope_atlas, 'atlas')
 register_extract_scope_algorithm(extract_scope_belleii, 'belleii')
+register_extract_scope_algorithm(extract_scope_dirac, 'dirac')
 
 
 def extract_scope(did, scopes=None, default_extract=_DEFAULT_EXTRACT):
