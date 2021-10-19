@@ -51,7 +51,7 @@ def add_files(lfns, issuer, ignore_availability, vo='def'):
         dids.append({'scope': scope, 'name': name})
         rse = lfn['rse']
         if rse not in rses:
-            rse_id = get_rse_id(rse=rse)
+            rse_id = get_rse_id(rse=rse, vo=vo)
             rses[rse] = rse_id
         lfn['rse_id'] = rses[rse]
 
