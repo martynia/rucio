@@ -51,7 +51,7 @@ def _exists(scope, name, session=None):
 
 
 @transactional_session
-def add_files(lfns, account, ignore_availability, session=None):
+def add_files(lfns, account, ignore_availability, session=None, vo='def'):
     """
     Bulk add files :
     - Create the file and replica.
@@ -61,7 +61,8 @@ def add_files(lfns, account, ignore_availability, session=None):
     :param lfns: List of lfn (dictionary {'lfn': <lfn>, 'rse': <rse>, 'bytes': <bytes>, 'adler32': <adler32>, 'guid': <guid>, 'pfn': <pfn>}
     :param issuer: The issuer account.
     :param ignore_availability: A boolean to ignore blocklisted sites.
-    :session: The session used
+    :param session: The session used
+    :param vo: The VO to act on
     """
     attachments = []
     # The list of scopes is necessary for the extract_scope
@@ -72,7 +73,7 @@ def add_files(lfns, account, ignore_availability, session=None):
         # First check if the file exists
         filename = lfn['lfn']
         lfn_scope, _ = extract_scope(filename, scopes)
-        lfn_scope = InternalScope(lfn_scope)
+        lfn_scope = InternalScope(lfn_scope, vo=vo)
 
         exists, did_type = _exists(lfn_scope, filename)
         if exists:
@@ -87,7 +88,7 @@ def add_files(lfns, account, ignore_availability, session=None):
         # The parent must be a dataset. Register it as well as the rule
         dsn_name = lpns[0]
         dsn_scope, _ = extract_scope(dsn_name, scopes)
-        dsn_scope = InternalScope(dsn_scope)
+        dsn_scope = InternalScope(dsn_scope, vo=vo)
         exists, did_type = _exists(dsn_scope, dsn_name)
         if exists and did_type == DIDType.CONTAINER:
             raise UnsupportedOperation('Cannot create %s as dataset' % dsn_name)
@@ -96,10 +97,10 @@ def add_files(lfns, account, ignore_availability, session=None):
             add_did(scope=dsn_scope,
                     name=dsn_name,
                     did_type=DIDType.DATASET,
-                    account=InternalAccount(account),
+                    account=InternalAccount(account, vo=vo),
                     statuses=None,
                     meta=None,
-                    rules=[{'copies': 1, 'rse_expression': 'ANY=true', 'weight': None, 'account': InternalAccount(account), 'lifetime': None, 'grouping': 'NONE'}],
+                    rules=[{'copies': 1, 'rse_expression': 'ANY=true', 'weight': None, 'account': InternalAccount(account, vo=vo), 'lifetime': None, 'grouping': 'NONE'}],
                     lifetime=None,
                     dids=None,
                     rse_id=None,
@@ -107,7 +108,7 @@ def add_files(lfns, account, ignore_availability, session=None):
             exist_lfn.append(dsn_name)
             parent_name = lpns[1]
             parent_scope, _ = extract_scope(parent_name, scopes)
-            parent_scope = InternalScope(parent_scope)
+            parent_scope = InternalScope(parent_scope, vo=vo)
             attachments.append({'scope': parent_scope, 'name': parent_name, 'dids': [{'scope': dsn_scope, 'name': dsn_name}]})
 
         # Register the file
@@ -126,11 +127,11 @@ def add_files(lfns, account, ignore_availability, session=None):
         add_replicas(rse_id=rse_id,
                      files=[files],
                      dataset_meta=None,
-                     account=InternalAccount(account),
+                     account=InternalAccount(account, vo=vo),
                      ignore_availability=ignore_availability,
                      session=session)
         add_rule(dids=[{'scope': lfn_scope, 'name': filename}],
-                 account=InternalAccount(account),
+                 account=InternalAccount(account, vo=vo),
                  copies=1,
                  rse_expression=lfn['rse'],
                  grouping=None,
@@ -144,7 +145,7 @@ def add_files(lfns, account, ignore_availability, session=None):
         # Now loop over the ascendants of the dataset and created them
         for lpn in lpns[1:]:
             child_scope, _ = extract_scope(lpn, scopes)
-            child_scope = InternalScope(child_scope)
+            child_scope = InternalScope(child_scope, vo=vo)
             exists, did_type = _exists(child_scope, lpn)
             if exists and did_type == DIDType.DATASET:
                 raise UnsupportedOperation('Cannot create %s as container' % lpn)
@@ -153,7 +154,7 @@ def add_files(lfns, account, ignore_availability, session=None):
                 add_did(scope=child_scope,
                         name=lpn,
                         did_type=DIDType.CONTAINER,
-                        account=InternalAccount(account),
+                        account=InternalAccount(account, vo=vo),
                         statuses=None,
                         meta=None,
                         rules=None,
@@ -164,10 +165,10 @@ def add_files(lfns, account, ignore_availability, session=None):
                 exist_lfn.append(lpn)
                 parent_name = lpns[lpns.index(lpn) + 1]
                 parent_scope, _ = extract_scope(parent_name, scopes)
-                parent_scope = InternalScope(parent_scope)
+                parent_scope = InternalScope(parent_scope, vo=vo)
                 attachments.append({'scope': parent_scope, 'name': parent_name, 'dids': [{'scope': child_scope, 'name': lpn}]})
     # Finally attach everything
     attach_dids_to_dids(attachments,
-                        account=InternalAccount(account),
+                        account=InternalAccount(account, vo=vo),
                         ignore_duplicate=True,
                         session=session)

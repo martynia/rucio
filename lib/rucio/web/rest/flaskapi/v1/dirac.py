@@ -14,6 +14,7 @@
 # limitations under the License.
 #
 # Authors:
+# - Janusz Martyniak <janusz.martyniak@imperial.ac.uk>, 2021
 # - Cedric Serfon <cedric.serfon@cern.ch>, 2020
 # - Benedikt Ziemons <benedikt.ziemons@cern.ch>, 2020-2021
 # - Thomas Beermann <thomas.beermann@cern.ch>, 2021
@@ -56,7 +57,8 @@ class AddFiles(ErrorHandlingMethodView):
         ignore_availability = param_get(parameters, 'ignore_availability', default=False)
 
         try:
-            add_files(lfns=lfns, issuer=request.environ.get('issuer'), ignore_availability=ignore_availability)
+            add_files(lfns=lfns, issuer=request.environ.get('issuer'), ignore_availability=ignore_availability,
+                      vo=request.environ.get('vo'))
         except InvalidPath as error:
             return generate_http_error_flask(400, error)
         except AccessDenied as error:
