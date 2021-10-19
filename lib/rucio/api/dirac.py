@@ -43,7 +43,7 @@ def add_files(lfns, issuer, ignore_availability, vo='def'):
     :param vo: The VO to act on.
 
     """
-    scopes = list_scopes()
+    scopes = list_scopes(vo=vo)
     dids = []
     rses = {}
     for lfn in lfns:
