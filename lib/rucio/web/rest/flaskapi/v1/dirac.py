@@ -14,11 +14,12 @@
 # limitations under the License.
 #
 # Authors:
-# - Janusz Martyniak <janusz.martyniak@imperial.ac.uk>, 2021
 # - Cedric Serfon <cedric.serfon@cern.ch>, 2020
 # - Benedikt Ziemons <benedikt.ziemons@cern.ch>, 2020-2021
 # - Thomas Beermann <thomas.beermann@cern.ch>, 2021
+# - Janusz Martyniak <janusz.martyniak@imperial.ac.uk>, 2021
 
+import logging
 from flask import Flask, Blueprint, request
 
 from rucio.api.dirac import add_files
@@ -56,7 +57,10 @@ class AddFiles(ErrorHandlingMethodView):
         lfns = param_get(parameters, 'lfns')
         ignore_availability = param_get(parameters, 'ignore_availability', default=False)
 
+        LOGGER = logging.getLogger('Dirac.addFiles')
+        LOGGER.setLevel(logging.INFO)
         try:
+            LOGGER.info("Dirac addFiles for VO: ", request.environ.get('vo'))
             add_files(lfns=lfns, issuer=request.environ.get('issuer'), ignore_availability=ignore_availability,
                       vo=request.environ.get('vo'))
         except InvalidPath as error:
