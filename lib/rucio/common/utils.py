@@ -752,6 +752,7 @@ def extract_scope_dirac(did, scopes):
         scope = elem[1]
     return scope, did
 
+
 def extract_scope_belleii(did, scopes):
     split_did = did.split('/')
     if did.startswith('/belle/MC/'):
