@@ -68,7 +68,7 @@ def add_files(lfns, account, ignore_availability, session=None, vo='def'):
     attachments = []
     # The list of scopes is necessary for the extract_scope
     filter_ = {'scope': InternalScope(scope='*', vo=vo)}
-    scopes = list_scopes(session=session, filter=filter_)
+    scopes = list_scopes(session=session, filter_=filter_)
     scopes = [scope.external for scope in scopes]
     exist_lfn = []
     for lfn in lfns:
