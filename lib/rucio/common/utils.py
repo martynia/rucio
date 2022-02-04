@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright 2012-2021 CERN
+# Copyright 2012-2022 CERN
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,8 +39,13 @@
 # - Anil Panta <47672624+panta-123@users.noreply.github.com>, 2021
 # - Ilija Vukotic <ivukotic@cern.ch>, 2021
 # - David Población Criado <david.poblacion.criado@cern.ch>, 2021
+# - martynia <janusz.martyniak@googlemail.com>, 2021-2022
+# - jdierkes <joel.dierkes@cern.ch>, 2021
+# - Rakshita Varadarajan <rakshitajps@gmail.com>, 2021
+# - Rob Barnsley <robbarnsley@users.noreply.github.com>, 2021
+# - Igor Mandrichenko <ivm@fnal.gov>, 2021
 # - Joel Dierkes <joel.dierkes@cern.ch>, 2021
-# - Janusz Martyniak <janusz.martyniak@imperial.ac.uk>, 2021
+# - Janusz Martyniak <janusz.martyniak@googlemail.com>, 2022
 
 from __future__ import absolute_import, print_function
 

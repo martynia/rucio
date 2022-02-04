@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright 2020-2021 CERN
+# Copyright 2020-2022 CERN
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 # - Eli Chadwick <eli.chadwick@stfc.ac.uk>, 2020
 # - Martin Barisits <martin.barisits@cern.ch>, 2020-2021
 # - Benedikt Ziemons <benedikt.ziemons@cern.ch>, 2020
-# - Janusz Martyniak <janusz.martyniak@imperial.ac.uk>, 2021
+# - Janusz Martyniak <janusz.martyniak@googlemail.com>, 2022
 
 from __future__ import print_function
 
