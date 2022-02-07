@@ -18,6 +18,8 @@
 # - Radu Carpa <radu.carpa@cern.ch>, 2021
 # - Mayank Sharma <mayank.sharma@cern.ch>, 2021
 # - Simon Fayer <simon.fayer05@imperial.ac.uk>, 2021
+# - Rakshita Varadarajan <rakshitajps@gmail.com>, 2021
+# - Cedric Serfon <cedric.serfon@cern.ch>, 2021
 
 from __future__ import print_function
 
@@ -33,6 +35,20 @@ import pytest
 def vo():
     from rucio.tests.common_server import get_vo
     return get_vo()
+
+
+@pytest.fixture(scope='session')
+def second_vo():
+    from rucio.common.config import config_get_bool
+    from rucio.core.vo import vo_exists, add_vo
+    multi_vo = config_get_bool('common', 'multi_vo', raise_exception=False, default=False)
+    if not multi_vo:
+        pytest.skip('multi_vo mode is not enabled. Running multi_vo tests in single_vo mode would result in failures.')
+
+    new_vo = 'new'
+    if not vo_exists(vo=new_vo):
+        add_vo(vo=new_vo, description='Test', email='rucio@email.com')
+    return new_vo
 
 
 @pytest.fixture(scope='session')
@@ -125,7 +141,7 @@ def root_account(vo):
 @pytest.fixture(scope="module")
 def containerized_rses(rucio_client):
     """
-    Detects if containerized rses for xrootd are available in the testing environment.
+    Detects if containerized rses for xrootd & ssh are available in the testing environment.
     :return: A list of (rse_name, rse_id) tuples.
     """
     from rucio.common.exception import InvalidRSEExpression
@@ -137,6 +153,11 @@ def containerized_rses(rucio_client):
         xrd_containerized_rses = [(rse_obj['rse'], rse_obj['id']) for rse_obj in xrd_rses if "xrd" in rse_obj['rse'].lower()]
         xrd_containerized_rses.sort()
         rses.extend(xrd_containerized_rses)
+        ssh_rses = [x['rse'] for x in rucio_client.list_rses(rse_expression='test_container_ssh=True')]
+        ssh_rses = [rucio_client.get_rse(rse) for rse in ssh_rses]
+        ssh_containerized_rses = [(rse_obj['rse'], rse_obj['id']) for rse_obj in ssh_rses if "ssh" in rse_obj['rse'].lower()]
+        ssh_containerized_rses.sort()
+        rses.extend(ssh_containerized_rses)
     except InvalidRSEExpression as invalid_rse_expression:
         print("{ex}. Note that containerized RSEs will not be available in non-containerized test environments"
               .format(ex=invalid_rse_expression))
@@ -166,6 +187,25 @@ def file_factory(tmp_path_factory):
 
     with TemporaryFileFactory(pytest_path_factory=tmp_path_factory) as factory:
         yield factory
+
+
+@pytest.fixture
+def scope_factory():
+    from rucio.common.utils import generate_uuid
+    from rucio.core.scope import add_scope
+    from rucio.common.types import InternalAccount, InternalScope
+
+    def create_scopes(vos, account_name=None):
+        scope_uuid = str(generate_uuid()).lower()[:16]
+        scope_name = 'shr_%s' % scope_uuid
+        created_scopes = []
+        for vo in vos:
+            scope = InternalScope(scope_name, vo=vo)
+            add_scope(scope, InternalAccount(account_name if account_name else 'root', vo=vo))
+            created_scopes.append(scope)
+        return scope_name, created_scopes
+
+    return create_scopes
 
 
 @pytest.fixture
@@ -253,7 +293,7 @@ def file_config_mock(request):
     via the API, as the server config is not changed.
     """
     from unittest import mock
-    from rucio.common.config import Config, config_set
+    from rucio.common.config import Config, config_set, config_has_section, config_add_section
 
     # Get the fixture parameters
     overrides = []
@@ -264,6 +304,8 @@ def file_config_mock(request):
     parser = Config().parser
     with mock.patch('rucio.common.config.get_config', side_effect=lambda: parser):
         for section, option, value in (overrides or []):
+            if not config_has_section(section):
+                config_add_section(section)
             config_set(section, option, value)
         yield
 
@@ -290,11 +332,13 @@ def caches_mock(request):
         caches_to_mock = params.get("caches_to_mock", caches_to_mock)
 
     with ExitStack() as stack:
+        mocked_caches = []
         for module in caches_to_mock:
             region = make_region().configure('dogpile.cache.memory', expiration_time=600)
             stack.enter_context(mock.patch(module, new=region))
+            mocked_caches.append(region)
 
-        yield
+        yield mocked_caches
 
 
 @pytest.fixture

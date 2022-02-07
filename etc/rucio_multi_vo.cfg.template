@@ -1,4 +1,4 @@
-# Copyright 2020-2021 CERN
+# Copyright 2020-2022 CERN
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@
 # - Eli Chadwick <eli.chadwick@stfc.ac.uk>, 2020
 # - Benedikt Ziemons <benedikt.ziemons@cern.ch>, 2020-2021
 # - David Población Criado <david.poblacion.criado@cern.ch>, 2021
+# - Radu Carpa <radu.carpa@cern.ch>, 2021-2022
+# - Joel Dierkes <joel.dierkes@cern.ch>, 2021
 
 [common]
 logdir = /var/log/rucio
@@ -98,8 +100,6 @@ transfertool = fts3
 ftshosts = https://fts3-pilot.cern.ch:8446, https://fts3-pilot.cern.ch:8446
 cacert = /opt/rucio/etc/web/ca.crt
 usercert = /opt/rucio/tools/x509up
-fts_throttler_cycle = fts_throttler_cycle.json
-fts_throttler_tuning_ratio = 20
 
 [messaging-fts3]
 port = 61123
@@ -207,12 +207,6 @@ ddm_url = http://atlas-agis-api.cern.ch/request/ddmendpoint/query/list/?json
 [c3po-workload]
 panda_url = http://bigpanda.cern.ch/jobs/?category=analysis&jobstatus=running
 window = 604800
-
-[sonar]
-dataset_prefix = sonar.test.medium.
-dataset_size = 5000000000
-dataset_dir = ~/public/sonar_medium_dataset/
-scope = user.vzavrtan
 
 [policy]
 #package = GenericMultiVORucioPolicy #doesn't exist

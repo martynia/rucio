@@ -1,20 +1,30 @@
-# Copyright European Organization for Nuclear Research (CERN)
+# -*- coding: utf-8 -*-
+# Copyright 2013-2021 CERN
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
-# You may not use this file except in compliance with the License.
+# you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# http://www.apache.org/licenses/LICENSE-2.0
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 #
 # Authors:
-# - Martin Barisits, <martin.barisits@cern.ch>, 2013-2019
-# - Mario Lassnig, <mario.lassnig@cern.ch>, 2013-2014
-# - Vincent Garonne, <vincent.garonne@cern.ch>, 2014-2018
-# - Cedric Serfon, <cedric.serfon@cern.ch>, 2014-2018
-# - Thomas Beermann, <thomas.beermann@cern.ch>, 2014-2018
-# - Andrew Lister, <andrew.lister@stfc.ac.uk>, 2019
+# - Martin Barisits <martin.barisits@cern.ch>, 2013-2019
+# - Mario Lassnig <mario.lassnig@cern.ch>, 2013-2014
+# - Vincent Garonne <vincent.garonne@cern.ch>, 2014-2018
+# - Cedric Serfon <cedric.serfon@cern.ch>, 2014-2018
+# - Thomas Beermann <thomas.beermann@cern.ch>, 2014-2021
+# - Hannes Hansen <hannes.jakob.hansen@cern.ch>, 2018
+# - Andrew Lister <andrew.lister@stfc.ac.uk>, 2019
 # - Luc Goossens <luc.goossens@cern.ch>, 2020
-#
-# PY3K COMPATIBLE
+# - Eli Chadwick <eli.chadwick@stfc.ac.uk>, 2020
+# - David Población Criado <david.poblacion.criado@cern.ch>, 2021
+# - Joel Dierkes <joel.dierkes@cern.ch>, 2021
 
 import logging
 from datetime import datetime
@@ -24,12 +34,15 @@ from sqlalchemy.sql.expression import and_, or_
 
 import rucio.core.rule
 import rucio.core.did
-
+from rucio.common.exception import DataIdentifierNotFound
 from rucio.core.lifetime_exception import define_eol
 from rucio.core.rse import get_rse_name
+
 from rucio.db.sqla import models, filter_thread_work
 from rucio.db.sqla.constants import LockState, RuleState, RuleGrouping, DIDType, RuleNotification
 from rucio.db.sqla.session import read_session, transactional_session, stream_session
+
+from rucio.common.types import InternalScope
 
 
 @stream_session
@@ -64,6 +77,39 @@ def get_dataset_locks(scope, name, session=None):
                'length': length,
                'bytes': bytes_,
                'accessed_at': accessed_at}
+
+
+@stream_session
+def get_dataset_locks_bulk(dids, session=None):
+    """
+    Get the dataset locks of a list of datasets or containers, recursively
+
+    :param dids:           List of dictionaries {"scope":scope(type:InternalScope), "name":name,
+                           "type":did type(DIDType.DATASET or DIDType.CONTAINER)}, "type" is optional
+    :param session:        The db session to use.
+    :return:               Generator of lock_info dicts, may contain duplicates
+    """
+
+    for did in dids:
+        scope = did["scope"]
+        assert isinstance(scope, InternalScope)
+        name = did["name"]
+        did_type = did.get("type")
+        if not did_type:
+            try:
+                did_info = rucio.core.did.get_did(scope, name, session=session)
+            except DataIdentifierNotFound:
+                continue
+            did_type = did_info["type"]
+        assert did_type in (DIDType.DATASET, DIDType.CONTAINER)
+        if did_type == DIDType.DATASET:
+            for lock_dict in get_dataset_locks(scope, name, session=session):
+                yield lock_dict
+        else:
+            for dataset_info in rucio.core.did.list_child_datasets(scope, name, session=session):
+                dataset_scope, dataset_name = dataset_info["scope"], dataset_info["name"]
+                for lock_dict in get_dataset_locks(dataset_scope, dataset_name, session=session):
+                    yield lock_dict
 
 
 @stream_session
@@ -281,7 +327,7 @@ def get_files_and_replica_locks_of_dataset(scope, name, nowait=False, restrict_r
 
 
 @transactional_session
-def successful_transfer(scope, name, rse_id, nowait, session=None):
+def successful_transfer(scope, name, rse_id, nowait, session=None, logger=logging.log):
     """
     Update the state of all replica locks because of an successful transfer
 
@@ -296,10 +342,10 @@ def successful_transfer(scope, name, rse_id, nowait, session=None):
     for lock in locks:
         if lock.state == LockState.OK:
             continue
-        logging.debug('Marking lock %s:%s for rule %s on rse %s as OK' % (lock.scope, lock.name, str(lock.rule_id), get_rse_name(rse_id=lock.rse_id, session=session)))
+        logger(logging.DEBUG, 'Marking lock %s:%s for rule %s on rse %s as OK' % (lock.scope, lock.name, str(lock.rule_id), get_rse_name(rse_id=lock.rse_id, session=session)))
         # Update the rule counters
         rule = session.query(models.ReplicationRule).with_for_update(nowait=nowait).filter_by(id=lock.rule_id).one()
-        logging.debug('Updating rule counters for rule %s [%d/%d/%d]' % (str(rule.id), rule.locks_ok_cnt, rule.locks_replicating_cnt, rule.locks_stuck_cnt))
+        logger(logging.DEBUG, 'Updating rule counters for rule %s [%d/%d/%d]' % (str(rule.id), rule.locks_ok_cnt, rule.locks_replicating_cnt, rule.locks_stuck_cnt))
 
         if lock.state == LockState.REPLICATING:
             rule.locks_replicating_cnt -= 1
@@ -307,7 +353,7 @@ def successful_transfer(scope, name, rse_id, nowait, session=None):
             rule.locks_stuck_cnt -= 1
         rule.locks_ok_cnt += 1
         lock.state = LockState.OK
-        logging.debug('Finished updating rule counters for rule %s [%d/%d/%d]' % (str(rule.id), rule.locks_ok_cnt, rule.locks_replicating_cnt, rule.locks_stuck_cnt))
+        logger(logging.DEBUG, 'Finished updating rule counters for rule %s [%d/%d/%d]' % (str(rule.id), rule.locks_ok_cnt, rule.locks_replicating_cnt, rule.locks_stuck_cnt))
 
         # Insert UpdatedCollectionReplica
         if rule.did_type == DIDType.DATASET:
@@ -350,7 +396,7 @@ def successful_transfer(scope, name, rse_id, nowait, session=None):
 
 
 @transactional_session
-def failed_transfer(scope, name, rse_id, error_message=None, broken_rule_id=None, broken_message=None, nowait=True, session=None):
+def failed_transfer(scope, name, rse_id, error_message=None, broken_rule_id=None, broken_message=None, nowait=True, session=None, logger=logging.log):
     """
     Update the state of all replica locks because of a failed transfer.
     If a transfer is permanently broken for a rule, the broken_rule_id should be filled which puts this rule into the SUSPENDED state.
@@ -369,17 +415,17 @@ def failed_transfer(scope, name, rse_id, error_message=None, broken_rule_id=None
     for lock in locks:
         if lock.state == LockState.STUCK:
             continue
-        logging.debug('Marking lock %s:%s for rule %s on rse %s as STUCK' % (lock.scope, lock.name, str(lock.rule_id), get_rse_name(rse_id=lock.rse_id, session=session)))
+        logger(logging.DEBUG, 'Marking lock %s:%s for rule %s on rse %s as STUCK' % (lock.scope, lock.name, str(lock.rule_id), get_rse_name(rse_id=lock.rse_id, session=session)))
         # Update the rule counters
         rule = session.query(models.ReplicationRule).with_for_update(nowait=nowait).filter_by(id=lock.rule_id).one()
-        logging.debug('Updating rule counters for rule %s [%d/%d/%d]' % (str(rule.id), rule.locks_ok_cnt, rule.locks_replicating_cnt, rule.locks_stuck_cnt))
+        logger(logging.DEBUG, 'Updating rule counters for rule %s [%d/%d/%d]' % (str(rule.id), rule.locks_ok_cnt, rule.locks_replicating_cnt, rule.locks_stuck_cnt))
         if lock.state == LockState.REPLICATING:
             rule.locks_replicating_cnt -= 1
         elif lock.state == LockState.OK:
             rule.locks_ok_cnt -= 1
         rule.locks_stuck_cnt += 1
         lock.state = LockState.STUCK
-        logging.debug('Finished updating rule counters for rule %s [%d/%d/%d]' % (str(rule.id), rule.locks_ok_cnt, rule.locks_replicating_cnt, rule.locks_stuck_cnt))
+        logger(logging.DEBUG, 'Finished updating rule counters for rule %s [%d/%d/%d]' % (str(rule.id), rule.locks_ok_cnt, rule.locks_replicating_cnt, rule.locks_stuck_cnt))
 
         # Update the rule state
         if rule.state == RuleState.SUSPENDED:

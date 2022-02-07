@@ -19,13 +19,14 @@
 # - Thomas Beermann <thomas.beermann@cern.ch>, 2016-2021
 # - Hannes Hansen <hannes.jakob.hansen@cern.ch>, 2018-2019
 # - Andrew Lister <andrew.lister@stfc.ac.uk>, 2019
-# - Cedric Serfon <cedric.serfon@cern.ch>, 2020
+# - Cedric Serfon <cedric.serfon@cern.ch>, 2020-2022
 # - Brandon White <bjwhite@fnal.gov>, 2019
 # - Patrick Austin <patrick.austin@stfc.ac.uk>, 2020
 # - Benedikt Ziemons <benedikt.ziemons@cern.ch>, 2020
 # - Dimitrios Christidis <dimitrios.christidis@cern.ch>, 2020-2021
 # - Eric Vaandering <ewv@fnal.gov>, 2021
 # - David Población Criado <david.poblacion.criado@cern.ch>, 2021
+# - Joel Dierkes <joel.dierkes@cern.ch>, 2021
 
 '''
 Dark Reaper is a daemon to manage quarantined file deletion.
@@ -47,13 +48,13 @@ from rucio.common.config import config_get_bool
 from rucio.common.exception import (SourceNotFound, DatabaseException, ServiceUnavailable,
                                     RSEAccessDenied, ResourceTemporaryUnavailable,
                                     RSENotFound, VONotFound)
-from rucio.common.logging import setup_logging
+from rucio.common.logging import setup_logging, formatted_logger
 from rucio.common.utils import daemon_sleep
 from rucio.core.heartbeat import live, die, sanity_check
 from rucio.core.message import add_message
 from rucio.core.quarantined_replica import (list_quarantined_replicas,
                                             delete_quarantined_replicas,
-                                            list_rses)
+                                            list_rses_with_quarantined_replicas)
 import rucio.core.rse as rse_core
 from rucio.core.rse_expression_parser import parse_expression
 from rucio.core.vo import list_vos
@@ -64,7 +65,7 @@ logging.getLogger("requests").setLevel(logging.CRITICAL)
 GRACEFUL_STOP = threading.Event()
 
 
-def reaper(rses, worker_number=0, total_workers=1, chunk_size=100, once=False, scheme=None, sleep_time=60):
+def reaper(rses, worker_number=0, total_workers=1, chunk_size=100, once=False, scheme=None, sleep_time=300):
     """
     Main loop to select and delete files.
 
@@ -90,25 +91,27 @@ def reaper(rses, worker_number=0, total_workers=1, chunk_size=100, once=False, s
             # heartbeat
             heartbeat = live(executable=executable, hostname=hostname, pid=pid, thread=thread,
                              hash_executable=hash_executable)
-            logging.info('Dark Reaper({0[worker_number]}/{0[total_workers]}): Live gives {0[heartbeat]}'
-                         .format(locals()))
+            prepend_str = 'dark-reapter [%i/%i] : ' % (heartbeat['assign_thread'], heartbeat['nr_threads'])
+            logger = formatted_logger(logging.log, prepend_str + '%s')
+            logger(logging.INFO, 'Live gives {0[heartbeat]}'.format(locals()))
             nothing_to_do = True
             start_time = time.time()
 
-            rses_to_process = list(set(rses) & set(list_rses()))
+            rses_to_process = list(set(rses) & set(list_rses_with_quarantined_replicas()))
             random.shuffle(rses_to_process)
             for rse_id in rses_to_process:
-                replicas = list_quarantined_replicas(rse_id=rse_id,
-                                                     limit=chunk_size, worker_number=worker_number,
-                                                     total_workers=total_workers)
+                # The following query returns the list of real replicas (deleted_replicas) and list of dark replicas (dark_replicas)
+                # Real replicas can be directly removed from the quarantine table
+                deleted_replicas, dark_replicas = list_quarantined_replicas(rse_id=rse_id,
+                                                                            limit=chunk_size, worker_number=worker_number,
+                                                                            total_workers=total_workers)
 
                 rse_info = rsemgr.get_rse_info(rse_id=rse_id)
                 rse = rse_info['rse']
                 prot = rsemgr.create_protocol(rse_info, 'delete', scheme=scheme)
-                deleted_replicas = []
                 try:
                     prot.connect()
-                    for replica in replicas:
+                    for replica in dark_replicas:
                         nothing_to_do = False
                         scope = ''
                         if replica['scope']:
@@ -120,13 +123,11 @@ def reaper(rses, worker_number=0, total_workers=1, chunk_size=100, once=False, s
                                                                    'path': replica['path']}],
                                                             operation='delete',
                                                             scheme=scheme).values())[0])
-                            logging.info('Dark Reaper %s-%s: Deletion ATTEMPT of %s:%s as %s on %s',
-                                         worker_number, total_workers, scope, replica['name'], pfn, rse)
+                            logger(logging.INFO, 'Deletion ATTEMPT of %s:%s as %s on %s', scope, replica['name'], pfn, rse)
                             start = time.time()
                             prot.delete(pfn)
                             duration = time.time() - start
-                            logging.info('Dark Reaper %s-%s: Deletion SUCCESS of %s:%s as %s on %s in %s seconds',
-                                         worker_number, total_workers, scope, replica['name'], pfn, rse, duration)
+                            logger(logging.INFO, 'Deletion SUCCESS of %s:%s as %s on %s in %s seconds', scope, replica['name'], pfn, rse, duration)
                             payload = {'scope': scope,
                                        'name': replica['name'],
                                        'rse': rse,
@@ -141,14 +142,14 @@ def reaper(rses, worker_number=0, total_workers=1, chunk_size=100, once=False, s
                             add_message('deletion-done', payload)
                             deleted_replicas.append(replica)
                         except SourceNotFound:
-                            err_msg = ('Dark Reaper %s-%s: Deletion NOTFOUND of %s:%s as %s on %s'
-                                       % (worker_number, total_workers, scope, replica['name'], pfn, rse))
-                            logging.warning(err_msg)
+                            err_msg = ('Deletion NOTFOUND of %s:%s as %s on %s'
+                                       % (scope, replica['name'], pfn, rse))
+                            logger(logging.WARNING, err_msg)
                             deleted_replicas.append(replica)
                         except (ServiceUnavailable, RSEAccessDenied, ResourceTemporaryUnavailable) as error:
-                            err_msg = ('Dark Reaper %s-%s: Deletion NOACCESS of %s:%s as %s on %s: %s'
-                                       % (worker_number, total_workers, scope, replica['name'], pfn, rse, str(error)))
-                            logging.warning(err_msg)
+                            err_msg = ('Deletion NOACCESS of %s:%s as %s on %s: %s'
+                                       % (scope, replica['name'], pfn, rse, str(error)))
+                            logger(logging.WARNING, err_msg)
                             payload = {'scope': scope,
                                        'name': replica['name'],
                                        'rse': rse,
@@ -176,7 +177,7 @@ def reaper(rses, worker_number=0, total_workers=1, chunk_size=100, once=False, s
                 break
 
             if nothing_to_do:
-                logging.info('Dark Reaper %s-%s: Nothing to do', worker_number, total_workers)
+                logger(logging.INFO, 'Nothing to do')
                 daemon_sleep(start_time=start_time, sleep_time=sleep_time, graceful_stop=GRACEFUL_STOP)
 
         except DatabaseException as error:
@@ -198,7 +199,7 @@ def stop(signum=None, frame=None):
 
 
 def run(total_workers=1, chunk_size=100, once=False, rses=[], scheme=None,
-        exclude_rses=None, include_rses=None, vos=None, delay_seconds=0, sleep_time=60):
+        exclude_rses=None, include_rses=None, vos=None, delay_seconds=0, sleep_time=300):
     """
     Starts up the reaper threads.
 

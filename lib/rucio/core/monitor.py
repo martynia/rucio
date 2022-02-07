@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright 2013-2021 CERN
+# Copyright 2013-2022 CERN
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@
 # - Thomas Beermann <thomas.beermann@cern.ch>, 2017-2020
 # - Vincent Garonne <vincent.garonne@cern.ch>, 2018
 # - Hannes Hansen <hannes.jakob.hansen@cern.ch>, 2018-2019
-# - Radu Carpa <radu.carpa@cern.ch>, 2021
+# - Radu Carpa <radu.carpa@cern.ch>, 2021-2022
 
 """
 Graphite counters
@@ -27,14 +27,58 @@ Graphite counters
 
 from __future__ import division
 
+import atexit
+import logging
+import os
 import string
 import time
 from abc import abstractmethod
+from datetime import datetime, timedelta
+from pathlib import Path
+from retrying import retry
+from threading import Lock
 
-from prometheus_client import start_http_server, Counter, REGISTRY
+from prometheus_client import start_http_server, Counter, Gauge, Histogram, REGISTRY, CollectorRegistry, generate_latest, values, multiprocess
 from statsd import StatsClient
 
 from rucio.common.config import config_get, config_get_bool, config_get_int
+
+
+def cleanup_prometheus_files_at_exit():
+    if os.environ.get('prometheus_multiproc_dir'):
+        multiprocess.mark_process_dead(os.getpid())
+
+
+class MultiprocessMutexValue(values.MultiProcessValue()):
+    """
+    MultiprocessValue protected by mutex
+
+    Rucio usually is deployed using the apache MPM module, which means that it both uses multiple
+    subprocesses, and multiple threads per subprocess.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._lock = Lock()
+
+    def inc(self, amount):
+        with self._lock:
+            return super().inc(amount)
+
+    def set(self, value):
+        with self._lock:
+            return super().set(value)
+
+    def get(self):
+        with self._lock:
+            return super().get()
+
+
+if 'prometheus_multiproc_dir' in os.environ:
+    os.makedirs(os.environ['prometheus_multiproc_dir'], exist_ok=True)
+    values.ValueClass = MultiprocessMutexValue
+
+    atexit.register(cleanup_prometheus_files_at_exit)
+
 
 SERVER = config_get('monitor', 'carbon_server', raise_exception=False, default='localhost')
 PORT = config_get('monitor', 'carbon_port', raise_exception=False, default=8125)
@@ -47,6 +91,45 @@ if ENABLE_METRICS:
     start_http_server(METRICS_PORT, registry=REGISTRY)
 
 COUNTERS = {}
+GAUGES = {}
+TIMINGS = {}
+
+
+def _cleanup_old_prometheus_files(path, file_pattern, cleanup_delay, logger):
+    """cleanup behind processes which didn't finish gracefully."""
+
+    oldest_accepted_mtime = datetime.now() - timedelta(seconds=cleanup_delay)
+    for file in Path(path).glob(file_pattern):
+        if not file.is_file():
+            continue
+
+        file_mtime = datetime.fromtimestamp(file.stat().st_mtime)
+
+        if file_mtime < oldest_accepted_mtime:
+            logger(logging.INFO, 'Cleaning up prometheus db file %s', file)
+            try:
+                os.remove(file)
+            except FileNotFoundError:
+                # Probably file already removed by another concurrent process
+                pass
+
+
+def cleanup_old_prometheus_files(logger=logging.log):
+    path = os.environ.get('prometheus_multiproc_dir')
+    if path:
+        _cleanup_old_prometheus_files(path, file_pattern='gauge_live*.db', cleanup_delay=timedelta(hours=1).total_seconds(), logger=logger)
+        _cleanup_old_prometheus_files(path, file_pattern='*.db', cleanup_delay=timedelta(days=7).total_seconds(), logger=logger)
+
+
+@retry(retry_on_exception=lambda _: True,
+       wait_fixed=500,
+       stop_max_attempt_number=2)
+def generate_prometheus_metrics():
+    cleanup_old_prometheus_files()
+
+    registry = CollectorRegistry()
+    multiprocess.MultiProcessCollector(registry)
+    return generate_latest(registry)
 
 
 class MultiMetric:
@@ -106,6 +189,26 @@ class MultiCounter(MultiMetric):
         return Counter(name, documentation, labelnames=labelnames, labelvalues=labelvalues, registry=self._registry)
 
 
+class MultiGauge(MultiMetric):
+
+    def set(self, value):
+        self._prom.set(value)
+        CLIENT.gauge(self._statsd, value)
+
+    def init_prometheus_metric(self, name, documentation, labelnames=(), labelvalues=None):
+        return Gauge(name, documentation, labelnames=labelnames, labelvalues=labelvalues, registry=self._registry)
+
+
+class MultiTiming(MultiMetric):
+
+    def observe(self, value):
+        self._prom.observe(value)
+        CLIENT.timing(self._statsd, value)
+
+    def init_prometheus_metric(self, name, documentation, labelnames=(), labelvalues=None):
+        return Histogram(name, documentation, labelnames=labelnames, labelvalues=labelvalues, registry=self._registry)
+
+
 def record_counter(name, delta=1, labels=None):
     """
     Log one or more counters by arbitrary amounts
@@ -127,24 +230,40 @@ def record_counter(name, delta=1, labels=None):
         counter.inc(delta)
 
 
-def record_gauge(stat, value):
+def record_gauge(name, value, labels=None):
     """
      Log gauge information for a single stat
 
-    :param stat: The name of the stat to be updated.
+    :param name: The name of the stat to be updated.
     :param value: The value to log.
+    :param labels: labels used to parametrize the metric
     """
-    CLIENT.gauge(stat, value)
+    gauge = GAUGES.get(name)
+    if not gauge:
+        GAUGES[name] = gauge = MultiGauge(statsd=name, labelnames=labels.keys() if labels else ())
+
+    if labels:
+        gauge.labels(**labels).set(value)
+    else:
+        gauge.set(value)
 
 
-def record_timer(stat, time):
+def record_timer(name, time, labels=None):
     """
      Log timing information for a single stat (in miliseconds)
 
-    :param stat: The name of the stat to be updated.
-    :param value: The time to log.
+    :param name: The name of the stat to be updated.
+    :param time: The time to log.
+    :param labels: labels used to parametrize the metric
     """
-    CLIENT.timing(stat, time)
+    timing = TIMINGS.get(name)
+    if not timing:
+        TIMINGS[name] = timing = MultiTiming(statsd=name, labelnames=labels.keys() if labels else ())
+
+    if labels:
+        timing.labels(**labels).observe(time)
+    else:
+        timing.observe(time)
 
 
 class record_timer_block(object):
@@ -164,10 +283,11 @@ class record_timer_block(object):
             stuff2()
     """
 
-    def __init__(self, stats):
+    def __init__(self, stats, labels=None):
         if not isinstance(stats, list):
             stats = [stats]
         self.stats = stats
+        self.labels = labels
 
     def __enter__(self):
         self.start = time.time()
@@ -178,8 +298,8 @@ class record_timer_block(object):
         ms = int(round(1000 * dt))  # Convert to ms.
         for s in self.stats:
             if isinstance(s, str):
-                record_timer(s, ms)
+                record_timer(s, ms, labels=self.labels)
             elif isinstance(s, tuple):
                 if s[1] != 0:
                     ms = ms / s[1]
-                    record_timer(s[0], ms)
+                    record_timer(s[0], ms, labels=self.labels)

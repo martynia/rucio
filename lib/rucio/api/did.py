@@ -30,6 +30,8 @@
 # - Aristeidis Fkiaras <aristeidis.fkiaras@cern.ch>, 2020
 # - Patrick Austin <patrick.austin@stfc.ac.uk>, 2020
 # - Benedikt Ziemons <benedikt.ziemons@cern.ch>, 2020
+# - Gabriele Gaetano Fronze' <gabriele.fronze@to.infn.it>, 2020-2021
+# - Rob Barnsley <rob.barnsley@skao.int>, 2021
 
 from __future__ import print_function
 
@@ -51,7 +53,7 @@ def list_dids(scope, filters, did_type='collection', ignore_case=False, limit=No
     List dids in a scope.
 
     :param scope: The scope name.
-    :param pattern: The wildcard pattern.
+    :param filters: Filter arguments in form supported by the filter engine.
     :param did_type:  The type of the did: all(container, dataset, file), collection(dataset or container), dataset, container
     :param ignore_case: Ignore case distinctions.
     :param limit: The maximum number of DIDs returned.
@@ -60,14 +62,14 @@ def list_dids(scope, filters, did_type='collection', ignore_case=False, limit=No
     :param recursive: Recursively list DIDs content.
     :param vo: The VO to act on.
     """
-    validate_schema(name='did_filters', obj=filters, vo=vo)
-
     scope = InternalScope(scope, vo=vo)
 
-    if 'account' in filters:
-        filters['account'] = InternalAccount(filters['account'], vo=vo)
-    if 'scope' in filters:
-        filters['scope'] = InternalScope(filters['scope'], vo=vo)
+    # replace account and scope in filters with internal representation
+    for or_group in filters:
+        if 'account' in or_group:
+            or_group['account'] = InternalAccount(or_group['account'], vo=vo)
+        if 'scope' in or_group:
+            or_group['account'] = InternalScope(or_group['scope'], vo=vo)
 
     result = did.list_dids(scope=scope, filters=filters, did_type=did_type, ignore_case=ignore_case,
                            limit=limit, offset=offset, long=long, recursive=recursive)
@@ -452,6 +454,29 @@ def set_metadata_bulk(scope, name, meta, issuer, recursive=False, vo='def'):
 
     scope = InternalScope(scope, vo=vo)
     return did.set_metadata_bulk(scope=scope, name=name, meta=meta, recursive=recursive)
+
+
+def set_dids_metadata_bulk(dids, issuer, recursive=False, vo='def'):
+    """
+    Add metadata to a list of data identifiers.
+
+    :param issuer: The issuer account.
+    :param dids: A list of dids including metadata.
+    :param recursive: Option to propagate the metadata update to content.
+    :param vo: The VO to act on.
+    """
+
+    for entry in dids:
+        kwargs = {'scope': entry['scope'], 'name': entry['name'], 'meta': entry['meta'], 'issuer': issuer}
+        if not rucio.api.permission.has_permission(issuer=issuer, vo=vo, action='set_metadata_bulk', kwargs=kwargs):
+            raise rucio.common.exception.AccessDenied('Account %s can not add metadata to data identifier %s:%s' % (issuer, entry['scope'], entry['name']))
+        entry['scope'] = InternalScope(entry['scope'], vo=vo)
+        meta = entry['meta']
+        for key in meta:
+            if key in RESERVED_KEYS:
+                raise rucio.common.exception.AccessDenied('Account %s can not change the value of the metadata key %s to data identifier %s:%s' % (issuer, key, entry['scope'], entry['name']))
+
+    return did.set_dids_metadata_bulk(dids=dids, recursive=recursive)
 
 
 def get_metadata(scope, name, plugin='DID_COLUMN', vo='def'):

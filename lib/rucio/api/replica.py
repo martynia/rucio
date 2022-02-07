@@ -21,13 +21,18 @@
 # - Hannes Hansen <hannes.jakob.hansen@cern.ch>, 2018-2019
 # - Martin Barisits <martin.barisits@cern.ch>, 2019-2021
 # - Andrew Lister <andrew.lister@stfc.ac.uk>, 2019
-# - Ilija Vukotic <ivukotic@cern.ch>, 2020
+# - Ilija Vukotic <ivukotic@cern.ch>, 2020-2021
 # - Luc Goossens <luc.goossens@cern.ch>, 2020
 # - Patrick Austin <patrick.austin@stfc.ac.uk>, 2020
 # - Eric Vaandering <ewv@fnal.gov>, 2020
 # - Benedikt Ziemons <benedikt.ziemons@cern.ch>, 2020
 # - James Perry <j.perry@epcc.ed.ac.uk>, 2020
 # - Radu Carpa <radu.carpa@cern.ch>, 2021
+# - David Población Criado <david.poblacion.criado@cern.ch>, 2021
+# - Joel Dierkes <joel.dierkes@cern.ch>, 2021
+# - Christoph Ames <christoph.ames@cern.ch>, 2021
+
+import datetime
 
 from rucio.api import permission
 from rucio.db.sqla.constants import BadFilesStatus
@@ -37,6 +42,7 @@ from rucio.common import exception
 from rucio.common.schema import validate_schema
 from rucio.common.types import InternalAccount, InternalScope
 from rucio.common.utils import api_update_return_dict
+from rucio.common.constants import SuspiciousAvailability
 
 
 def get_bad_replicas_summary(rse_expression=None, from_date=None, to_date=None, vo='def'):
@@ -398,6 +404,9 @@ def add_bad_pfns(pfns, issuer, state, reason=None, expires_at=None, vo='def'):
     if not permission.has_permission(issuer=issuer, vo=vo, action='add_bad_pfns', kwargs=kwargs):
         raise exception.AccessDenied('Account %s can not declare bad PFNs' % (issuer))
 
+    if expires_at and datetime.datetime.utcnow() <= expires_at and expires_at > datetime.datetime.utcnow() + datetime.timedelta(days=30):
+        raise exception.InputValidationError('The given duration of %s days exceeds the maximum duration of 30 days.' % (expires_at - datetime.datetime.utcnow()).days)
+
     issuer = InternalAccount(issuer, vo=vo)
 
     return replica.add_bad_pfns(pfns=pfns, account=issuer, state=state, reason=reason, expires_at=expires_at)
@@ -435,7 +444,7 @@ def get_suspicious_files(rse_expression, younger_than=None, nattempts=None, vo='
     :param nattempts: The number of time the replicas have been declared suspicious
     :param vo: The VO to act on.
     """
-    replicas = replica.get_suspicious_files(rse_expression=rse_expression, younger_than=younger_than, nattempts=nattempts, filter_={'vo': vo})
+    replicas = replica.get_suspicious_files(rse_expression=rse_expression, available_elsewhere=SuspiciousAvailability["ALL"].value, younger_than=younger_than, nattempts=nattempts, filter_={'vo': vo})
     return [api_update_return_dict(r) for r in replicas]
 
 

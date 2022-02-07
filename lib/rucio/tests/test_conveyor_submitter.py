@@ -36,7 +36,20 @@ from rucio.db.sqla.session import read_session, transactional_session
 
 
 @pytest.mark.noparallel(reason="multiple submitters cannot be run in parallel due to partial job assignment by hash")
-def test_request_submitted_in_order(rse_factory, did_factory, root_account):
+@pytest.mark.parametrize("file_config_mock", [
+    # Run test twice: with, and without, temp tables
+    {
+        "overrides": [
+            ('core', 'use_temp_tables', 'True'),
+        ]
+    },
+    {
+        "overrides": [
+            ('core', 'use_temp_tables', 'False'),
+        ]
+    }
+], indirect=True)
+def test_request_submitted_in_order(rse_factory, did_factory, root_account, file_config_mock):
 
     src_rses = [rse_factory.make_posix_rse() for _ in range(2)]
     dst_rses = [rse_factory.make_posix_rse() for _ in range(3)]
@@ -82,7 +95,7 @@ def test_request_submitted_in_order(rse_factory, did_factory, root_account):
     requests_id_in_submission_order = []
     with patch('rucio.transfertool.mock.MockTransfertool.submit') as mock_transfertool_submit:
         # Record the order of requests passed to MockTranfertool.submit()
-        mock_transfertool_submit.side_effect = lambda transfers, _: requests_id_in_submission_order.extend([t.rws.request_id for t in transfers])
+        mock_transfertool_submit.side_effect = lambda transfers, job_params, timeout: requests_id_in_submission_order.extend([t.rws.request_id for t in transfers])
 
         submitter(once=True, rses=[{'id': rse_id} for _, rse_id in dst_rses], partition_wait_time=None, transfertool='mock', transfertype='single', filter_transfertool=None)
 
@@ -94,9 +107,21 @@ def test_request_submitted_in_order(rse_factory, did_factory, root_account):
 
 
 @pytest.mark.noparallel(reason="multiple submitters cannot be run in parallel due to partial job assignment by hash")
-@pytest.mark.parametrize("core_config_mock", [{"table_content": [
-    ('transfers', 'use_multihop', True)
-]}], indirect=True)
+@pytest.mark.parametrize("core_config_mock", [
+    # Run test twice: with, and without, temp tables
+    {
+        "table_content": [
+            ('transfers', 'use_multihop', True),
+            ('core', 'use_temp_tables', False),
+        ]
+    },
+    {
+        "table_content": [
+            ('transfers', 'use_multihop', True),
+            ('core', 'use_temp_tables', True),
+        ]
+    }
+], indirect=True)
 @pytest.mark.parametrize("caches_mock", [{"caches_to_mock": [
     'rucio.core.rse_expression_parser.REGION',  # The list of multihop RSEs is retrieved by rse expression
     'rucio.core.config.REGION',
@@ -170,8 +195,41 @@ def test_multihop_sources_created(rse_factory, did_factory, root_account, core_c
     replica = replica_core.get_replica(jump_rse3_id, **did)
     assert replica['tombstone'] is None
 
-    # Ensure that prometheus metrics were correctly registered. One submission for each transfer hop
-    assert metrics_mock.get_sample_value('rucio_core_request_submit_transfer_total') == 4
+    # Ensure that prometheus metrics were correctly registered. Only one submission, mock transfertool groups everything into one job.
+    assert metrics_mock.get_sample_value('rucio_core_request_submit_transfer_total') == 1
+
+
+@pytest.mark.noparallel(reason="multiple submitters cannot be run in parallel due to partial job assignment by hash")
+@pytest.mark.parametrize("core_config_mock", [{"table_content": [
+    ('transfers', 'use_multihop', True)
+]}], indirect=True)
+@pytest.mark.parametrize("caches_mock", [{"caches_to_mock": [
+    'rucio.core.rse_expression_parser.REGION',  # The list of multihop RSEs is retrieved by rse expression
+    'rucio.core.transfer.REGION_SHORT',
+]}], indirect=True)
+def test_ignore_availability(rse_factory, did_factory, root_account, core_config_mock, caches_mock):
+
+    def __setup_test():
+        src_rse, src_rse_id = rse_factory.make_posix_rse()
+        dst_rse, dst_rse_id = rse_factory.make_posix_rse()
+
+        distance_core.add_distance(src_rse_id, dst_rse_id, ranking=10)
+        did = did_factory.upload_test_file(src_rse)
+        rule_core.add_rule(dids=[did], account=root_account, copies=1, rse_expression=dst_rse, grouping='ALL', weight=None, lifetime=None, locked=False, subscription_id=None)
+
+        rse_core.update_rse(src_rse_id, {'availability_read': False})
+
+        return src_rse_id, dst_rse_id, did
+
+    src_rse_id, dst_rse_id, did = __setup_test()
+    submitter(once=True, rses=[{'id': rse_id} for rse_id in (src_rse_id, dst_rse_id)], partition_wait_time=None, transfertool='mock', transfertype='single')
+    request = request_core.get_request_by_did(rse_id=dst_rse_id, **did)
+    assert request['state'] == RequestState.NO_SOURCES
+
+    src_rse_id, dst_rse_id, did = __setup_test()
+    submitter(once=True, rses=[{'id': rse_id} for rse_id in (src_rse_id, dst_rse_id)], partition_wait_time=None, transfertool='mock', transfertype='single', ignore_availability=True)
+    request = request_core.get_request_by_did(rse_id=dst_rse_id, **did)
+    assert request['state'] == RequestState.SUBMITTED
 
 
 @pytest.mark.noparallel(reason="multiple submitters cannot be run in parallel due to partial job assignment by hash")

@@ -1,6 +1,6 @@
 # Code owner specification in Rucio
 #
-# Please consult the contribution guide for general contribution guidelines https://github.com/rucio/rucio/blob/master/CONTRIBUTING.rst
+# Please consult the contribution guide for general contribution guidelines https://rucio.cern.ch/documentation/contributing
 #
 # In addition to peer-review, which is open to the entire Rucio community, we also notify the respective component leads to review pull requests involving their components.
 # Component leads: https://github.com/rucio/rucio/wiki
@@ -17,7 +17,7 @@
 /lib/rucio/client/uploadclient.py       @mlassnig
 /lib/rucio/client/downloadclient.py     @mlassnig
 /lib/rucio/client/                      @mlassnig
-/bin/                                   @mlassnig
+/bin/                                   @mlassnig @joeldierkes
 
 # ----
 
@@ -99,22 +99,22 @@
 /lib/rucio/daemons/transmogrifier/      @cserf
 
 # Testing
-/.github/                               @bziemons
-/etc/docker/test/                       @bziemons
-/lib/rucio/tests/conftest.py            @bziemons
-/lib/rucio/tests/ruciopytest/           @bziemons
-/tools/github/                          @bziemons
-/tools/test/                            @bziemons
+/.github/                               @maany @joeldierkes
+/etc/docker/test/                       @maany @joeldierkes
+/lib/rucio/tests/conftest.py            @maany @joeldierkes
+/lib/rucio/tests/ruciopytest/           @maany @joeldierkes
+/tools/github/                          @maany @joeldierkes
+/tools/test/                            @maany @joeldierkes
 
 # Traces
 /lib/rucio/core/trace.py                @mlassnig
 /lib/rucio/daemons/tracer/              @mlassnig
 
 # Transfers
-/lib/rucio/core/transfer.py             @bari12
-/lib/rucio/core/request.py              @bari12
-/lib/rucio/daemons/conveyor/            @bari12
-/lib/rucio/transfertool/                @bari12
+/lib/rucio/core/transfer.py             @rcarpa
+/lib/rucio/core/request.py              @rcarpa
+/lib/rucio/daemons/conveyor/            @rcarpa
+/lib/rucio/transfertool/                @rcarpa
 
 # WebUI
-/lib/rucio/web/ui/                      @bari12
+/lib/rucio/web/ui/                      @maany

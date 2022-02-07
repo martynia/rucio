@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright 2020-2021 CERN
+# Copyright 2020-2022 CERN
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@
 # Authors:
 # - Benedikt Ziemons <benedikt.ziemons@cern.ch>, 2020
 # - Martin Barisits <martin.barisits@cern.ch>, 2021
+# - Radu Carpa <radu.carpa@cern.ch>, 2021-2022
+# - Joel Dierkes <joel.dierkes@cern.ch>, 2021
 
 import sys
 
@@ -29,14 +31,13 @@ from rucio.daemons.automatix import automatix
 from rucio.daemons.badreplicas import minos, minos_temporary_expiration, necromancer
 from rucio.daemons.c3po import c3po
 from rucio.daemons.cache import consumer
-from rucio.daemons.conveyor import finisher, fts_throttler, poller, receiver, stager, submitter, throttler, preparer
+from rucio.daemons.conveyor import finisher, poller, receiver, stager, submitter, throttler, preparer
 from rucio.daemons.follower import follower
 from rucio.daemons.hermes import hermes, hermes2
 from rucio.daemons.judge import cleaner, evaluator, injector, repairer
 from rucio.daemons.oauthmanager import oauthmanager
 from rucio.daemons.reaper import dark_reaper, light_reaper, reaper
 from rucio.daemons.replicarecoverer import suspicious_replica_recoverer
-from rucio.daemons.sonar.distribution import distribution_daemon
 from rucio.daemons.tracer import kronos
 from rucio.daemons.transmogrifier import transmogrifier
 from rucio.daemons.undertaker import undertaker
@@ -59,7 +60,6 @@ DAEMONS = [
     c3po,
     consumer,
     finisher,
-    fts_throttler,
     poller,
     receiver,
     stager,
@@ -78,8 +78,6 @@ DAEMONS = [
     light_reaper,
     reaper,
     suspicious_replica_recoverer,
-    distribution_daemon,
-    # sonar_v3_dev_daemon,  -- lib/rucio/common/config.py:55: NoSectionError: No section: 'sonar'
     kronos,
     transmogrifier,
     undertaker,

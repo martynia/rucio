@@ -1,4 +1,5 @@
-# Copyright 2016-2020 CERN for the benefit of the ATLAS collaboration.
+# -*- coding: utf-8 -*-
+# Copyright 2016-2021 CERN
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,18 +14,21 @@
 # limitations under the License.
 #
 # Authors:
-# - Vincent Garonne <vgaronne@gmail.com>, 2016
+# - Vincent Garonne <vincent.garonne@cern.ch>, 2016
 # - Martin Barisits <martin.barisits@cern.ch>, 2016-2020
 # - Cedric Serfon <cedric.serfon@cern.ch>, 2016-2021
 # - Mario Lassnig <mario.lassnig@cern.ch>, 2018-2020
 # - Hannes Hansen <hannes.jakob.hansen@cern.ch>, 2018-2019
 # - Andrew Lister <andrew.lister@stfc.ac.uk>, 2019
 # - Ruturaj Gujar <ruturaj.gujar23@gmail.com>, 2019
-# - Eric Vaandering, <ewv@fnal.gov>, 2020
+# - Jaroslav Guenther <jaroslav.guenther@cern.ch>, 2019
 # - Eli Chadwick <eli.chadwick@stfc.ac.uk>, 2020
 # - Patrick Austin <patrick.austin@stfc.ac.uk>, 2020
-#
-# PY3K COMPATIBLE
+# - Eric Vaandering <ewv@fnal.gov>, 2020
+# - Dimitrios Christidis <dimitrios.christidis@cern.ch>, 2021
+# - David Población Criado <david.poblacion.criado@cern.ch>, 2021
+# - Joel Dierkes <joel.dierkes@cern.ch>, 2021
+# - Ilija Vukotic <ivukotic@uchicago.edu>, 2021
 
 from typing import TYPE_CHECKING
 
@@ -118,6 +122,7 @@ def has_permission(issuer, action, kwargs):
             'add_attribute': perm_add_account_attribute,
             'del_attribute': perm_del_account_attribute,
             'list_heartbeats': perm_list_heartbeats,
+            'send_heartbeats': perm_send_heartbeats,
             'resurrect': perm_resurrect,
             'update_lifetime_exceptions': perm_update_lifetime_exceptions,
             'get_ssh_challenge_token': perm_get_ssh_challenge_token,
@@ -524,12 +529,8 @@ def perm_update_rule(issuer, kwargs):
     if _is_root(issuer) or has_account_attribute(account=issuer, key='admin'):
         return True
 
-    # Only admin accounts can change account, state, priority of a rule
-    if 'account' in kwargs['options'] or\
-       'state' in kwargs['options'] or\
-       'priority' in kwargs['options'] or\
-       'child_rule_id' in kwargs['options'] or\
-       'meta' in kwargs['options']:
+    admin_reserved = {'account', 'state', 'priority', 'child_rule_id', 'meta', 'boost_rule'}
+    if admin_reserved.intersection(kwargs['options'].keys()):
         return False  # Only priv accounts are allowed to change that
 
     # Country admins are allowed to change the rest.
@@ -1104,6 +1105,17 @@ def perm_list_heartbeats(issuer, kwargs):
     :returns: True if account is allowed to call the API call, otherwise False
     """
     return _is_root(issuer)
+
+
+def perm_send_heartbeats(issuer, kwargs):
+    """
+    Checks if an account can send heartbeats.
+
+    :param issuer: Account identifier which issues the command.
+    :param kwargs: List of arguments for the action.
+    :returns: True if account is allowed to call the API call, otherwise False
+    """
+    return _is_root(issuer) or has_account_attribute(account=issuer, key='admin')
 
 
 def perm_resurrect(issuer, kwargs):

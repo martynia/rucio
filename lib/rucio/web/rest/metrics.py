@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-# Copyright 2017-2018 CERN for the benefit of the ATLAS collaboration.
+# -*- coding: utf-8 -*-
+# Copyright 2021-2022 CERN
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,23 +14,17 @@
 # limitations under the License.
 #
 # Authors:
-# - Vitjan Zavrtanik, <vitjan.zavrtanik@cern.ch>, 2017
-# - Vincent Garonne, <vgaronne@gmail.com>, 2018
-# - Mario Lassnig, <mario.lassnig@cern.ch>, 2018
-#
-# PY3K COMPATIBLE
+# - Radu Carpa <radu.carpa@cern.ch>, 2021-2022
 
-'''
-Sonar is a daemon that tests inactive links.
-'''
+from rucio.common.logging import setup_logging
+from flask import Flask
+from rucio.web.rest.flaskapi.v1.metrics import blueprint as metrics_blueprint
 
-import signal
+# Allow to run the /metrics endpoint as a separate application on a separate PORT
 
-from rucio.daemons.sonar.sonar.sonar_v3_dev_daemon import run, stop
+setup_logging()
+application = Flask(__name__)
+application.register_blueprint(metrics_blueprint(standalone=True))
 
-if __name__ == "__main__":
-    signal.signal(signal.SIGTERM, stop)
-    try:
-        run()
-    except KeyboardInterrupt:
-        stop()
+if __name__ == '__main__':
+    application.run()

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright 2013-2021 CERN
+# Copyright 2013-2022 CERN
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 # - Mario Lassnig <mario.lassnig@cern.ch>, 2013-2021
 # - Vincent Garonne <vincent.garonne@cern.ch>, 2013-2017
 # - Cedric Serfon <cedric.serfon@cern.ch>, 2014-2020
-# - Martin Barisits <martin.barisits@cern.ch>, 2014-2021
+# - Martin Barisits <martin.barisits@cern.ch>, 2014-2022
 # - Wen Guan <wen.guan@cern.ch>, 2014-2016
 # - Joaquín Bogado <jbogado@linti.unlp.edu.ar>, 2015-2019
 # - Thomas Beermann <thomas.beermann@cern.ch>, 2016-2021
@@ -28,12 +28,11 @@
 # - Andrew Lister <andrew.lister@stfc.ac.uk>, 2019
 # - Brandon White <bjwhite@fnal.gov>, 2019
 # - Benedikt Ziemons <benedikt.ziemons@cern.ch>, 2020-2021
-# - Radu Carpa <radu.carpa@cern.ch>, 2021
+# - Radu Carpa <radu.carpa@cern.ch>, 2021-2022
 # - Matt Snyder <msnyder@bnl.gov>, 2021
 # - Sahan Dilshan <32576163+sahandilshan@users.noreply.github.com>, 2021
 # - Nick Smith <nick.smith@cern.ch>, 2021
 # - David Población Criado <david.poblacion.criado@cern.ch>, 2021
-# - Nick Smith <nick.smith@cern.ch>, 2021
 
 import datetime
 import json
@@ -55,6 +54,7 @@ from rucio.common.constants import FTS_STATE
 from rucio.common.exception import RequestNotFound, RucioException, UnsupportedOperation
 from rucio.common.types import InternalAccount, InternalScope
 from rucio.common.utils import generate_uuid, chunks, get_parsed_throttler_mode
+from rucio.core.config import get as core_config_get
 from rucio.core.message import add_message
 from rucio.core.monitor import record_counter, record_timer
 from rucio.core.rse import get_rse_name, get_rse_vo, get_rse_transfer_limits, get_rse_attribute
@@ -106,14 +106,15 @@ def should_retry_request(req, retry_protocol_mismatches):
 
 
 @transactional_session
-def requeue_and_archive(request, retry_protocol_mismatches=False, session=None, logger=logging.log):
+def requeue_and_archive(request, source_ranking_update=True, retry_protocol_mismatches=False, session=None, logger=logging.log):
     """
     Requeue and archive a failed request.
     TODO: Multiple requeue.
 
-    :param request:     Original request.
-    :param session:     Database session to use.
-    :param logger:      Optional decorated logger that can be passed from the calling daemons or servers.
+    :param request:               Original request.
+    :param source_ranking_update  Boolean. If True, the source ranking is decreased (making the sources less likely to be used)
+    :param session:               Database session to use.
+    :param logger:                Optional decorated logger that can be passed from the calling daemons or servers.
     """
 
     record_counter('core.request.requeue_request')
@@ -133,7 +134,7 @@ def requeue_and_archive(request, retry_protocol_mismatches=False, session=None, 
             elif new_req['state'] != RequestState.SUBMITTING:
                 new_req['retry_count'] += 1
 
-            if new_req['sources']:
+            if source_ranking_update and new_req['sources']:
                 for i in range(len(new_req['sources'])):
                     if new_req['sources'][i]['is_using']:
                         if new_req['sources'][i]['ranking'] is None:
@@ -307,8 +308,10 @@ def get_next(request_type, state, limit=100, older_than=None, rse_id=None, activ
     :param session:           Database session to use.
     :returns:                 Request as a dictionary.
     """
-
-    record_counter('core.request.get_next.{request_type}.{state}', labels={'request_type': request_type, 'state': state})
+    request_type_metric_label = '.'.join(a.name for a in request_type) if isinstance(request_type, list) else request_type.name
+    state_metric_label = '.'.join(s.name for s in state) if isinstance(state, list) else state.name
+    record_counter('core.request.get_next.{request_type}.{state}', labels={'request_type': request_type_metric_label,
+                                                                           'state': state_metric_label})
 
     # lists of one element are not allowed by SQLA, so just duplicate the item
     if type(request_type) is not list:
@@ -457,7 +460,8 @@ def query_request_details(request_id, transfertool='fts3', session=None, logger=
 
 
 @transactional_session
-def set_request_state(request_id, new_state, transfer_id=None, transferred_at=None, started_at=None, staging_started_at=None, staging_finished_at=None, src_rse_id=None, err_msg=None, session=None, logger=logging.log):
+def set_request_state(request_id, new_state, transfer_id=None, transferred_at=None, started_at=None, staging_started_at=None,
+                      staging_finished_at=None, src_rse_id=None, err_msg=None, attributes=None, session=None, logger=logging.log):
     """
     Update the state of a request.
 
@@ -491,6 +495,8 @@ def set_request_state(request_id, new_state, transfer_id=None, transferred_at=No
             update_items['source_rse_id'] = src_rse_id
         if err_msg:
             update_items['err_msg'] = err_msg
+        if attributes is not None:
+            update_items['attributes'] = json.dumps(attributes)
 
         request = get_request(request_id, session=session)
         if new_state in [RequestState.FAILED, RequestState.DONE, RequestState.LOST] and (request["external_id"] != transfer_id):
@@ -502,26 +508,6 @@ def set_request_state(request_id, new_state, transfer_id=None, transferred_at=No
 
     if not rowcount:
         raise UnsupportedOperation("Request %s state cannot be updated." % request_id)
-
-
-@transactional_session
-def set_requests_state(request_ids, new_state, session=None, logger=logging.log):
-    """
-    Bulk update the state of requests.
-
-    :param request_ids:  List of (Request-ID as a 32 character hex string).
-    :param new_state:    New state as string.
-    :param session:      Database session to use.
-    :param logger:       Optional decorated logger that can be passed from the calling daemons or servers.
-    """
-
-    record_counter('core.request.set_requests_state')
-
-    try:
-        for request_id in request_ids:
-            set_request_state(request_id, new_state, session=session, logger=logger)
-    except IntegrityError as error:
-        raise RucioException(error.args)
 
 
 @transactional_session
@@ -654,6 +640,7 @@ def get_request_by_did(scope, name, rse_id, request_type=None, session=None):
 
             tmp['source_rse'] = get_rse_name(rse_id=tmp['source_rse_id'], session=session) if tmp['source_rse_id'] is not None else None
             tmp['dest_rse'] = get_rse_name(rse_id=tmp['dest_rse_id'], session=session) if tmp['dest_rse_id'] is not None else None
+            tmp['attributes'] = json.loads(str(tmp['attributes']))
 
             return tmp
     except IntegrityError as error:
@@ -708,7 +695,7 @@ def archive_request(request_id, session=None):
         try:
             time_diff = req['updated_at'] - req['created_at']
             time_diff_s = time_diff.seconds + time_diff.days * 24 * 3600
-            record_timer('core.request.archive_request.%s' % req['activity'].replace(' ', '_'), time_diff_s)
+            record_timer('core.request.archive_request.{activity}', time_diff_s, labels={'activity': req['activity'].replace(' ', '_')})
             session.query(models.Source).filter_by(request_id=request_id).delete()
             session.query(models.Request).filter_by(id=request_id).delete()
         except IntegrityError as error:
@@ -756,19 +743,19 @@ def cancel_request_did(scope, name, dest_rse_id, request_type=RequestType.TRANSF
         archive_request(request_id=req[0], session=session)
 
 
-def cancel_request_external_id(transfer_id, transfer_host):
+def cancel_request_external_id(transfertool_obj, transfer_id):
     """
     Cancel a request based on external transfer id.
 
-    :param transfer_id:    External-ID as a 32 character hex string.
-    :param transfer_host:  Name of the external host.
+    :param transfertool_obj: Transfertool object to be used for cancellation.
+    :param transfer_id:      External-ID as a 32 character hex string.
     """
 
     record_counter('core.request.cancel_request_external_id')
     try:
-        FTS3Transfertool(external_host=transfer_host).cancel(transfer_ids=[transfer_id])
+        transfertool_obj.cancel(transfer_ids=[transfer_id])
     except Exception:
-        raise RucioException('Could not cancel FTS3 transfer %s on %s: %s' % (transfer_id, transfer_host, traceback.format_exc()))
+        raise RucioException('Could not cancel FTS3 transfer %s on %s: %s' % (transfer_id, transfertool_obj, traceback.format_exc()))
 
 
 @read_session
@@ -1273,6 +1260,19 @@ def update_request_state(response, session=None, logger=logging.log):
                         logger(logging.DEBUG, 'Correct RSE: %s for source surl: %s' % (src_rse_name, src_url))
                 err_msg = get_transfer_error(response['new_state'], response['reason'] if 'reason' in response else None)
 
+                attributes = None
+                if response['new_state'] == RequestState.FAILED and 'Destination file exists and overwrite is not enabled' in (response.get('reason') or ''):
+                    dst_file = response['dst_file']
+                    # if the file size is wrong or the checksum is wrong
+                    if (dst_file and (
+                            dst_file.get('file_size') is not None and dst_file['file_size'] != request.get('bytes')
+                            or dst_file.get('checksum_type', '').lower() == 'adler32' and dst_file.get('checksum_value') != request.get('adler32')
+                            or dst_file.get('checksum_type', '').lower() == 'md5' and dst_file.get('checksum_value') != request.get('md5'))):
+                        overwrite = core_config_get('transfers', 'overwrite_corrupted_files', default=False, session=session)
+                        if overwrite:
+                            attributes = request['attributes']
+                            attributes['overwrite'] = True
+
                 set_request_state(response['request_id'],
                                   response['new_state'],
                                   transfer_id=transfer_id,
@@ -1282,6 +1282,7 @@ def update_request_state(response, session=None, logger=logging.log):
                                   transferred_at=transferred_at,
                                   src_rse_id=src_rse_id,
                                   err_msg=err_msg,
+                                  attributes=attributes,
                                   session=session,
                                   logger=logger)
 

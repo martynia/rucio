@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright 2013-2021 CERN
+# Copyright 2013-2022 CERN
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,17 +37,22 @@
 # - Rahul Chauhan <omrahulchauhan@gmail.com>, 2021
 # - Radu Carpa <radu.carpa@cern.ch>, 2021
 # - David Población Criado <david.poblacion.criado@cern.ch>, 2021
+# - Rob Barnsley <robbarnsley@users.noreply.github.com>, 2021
+# - Joel Dierkes <joel.dierkes@cern.ch>, 2022
 
 import logging
+import operator
 import random
 from datetime import datetime, timedelta
 from enum import Enum
 from hashlib import md5
 from re import match
+from typing import Tuple
 
 from six import string_types
 from sqlalchemy import and_, or_, exists, update, delete
 from sqlalchemy.exc import DatabaseError, IntegrityError
+from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.sql import not_, func
 from sqlalchemy.sql.expression import bindparam, case, select, true, false
@@ -55,11 +60,12 @@ from sqlalchemy.sql.expression import bindparam, case, select, true, false
 import rucio.core.replica  # import add_replicas
 import rucio.core.rule
 from rucio.common import exception
-from rucio.common.utils import str_to_date, is_archive, chunks
+from rucio.common.utils import is_archive, chunks
 from rucio.core import did_meta_plugins, config as config_core
 from rucio.core.message import add_message
 from rucio.core.monitor import record_timer_block, record_counter
 from rucio.core.naming_convention import validate_name
+from rucio.core.did_meta_plugins.filter_engine import FilterEngine
 from rucio.db.sqla import models, filter_thread_work
 from rucio.db.sqla.constants import DIDType, DIDReEvaluation, DIDAvailability, RuleState
 from rucio.db.sqla.session import read_session, transactional_session, stream_session
@@ -356,13 +362,14 @@ def __add_files_to_dataset(scope, name, files, account, rse_id, ignore_duplicate
     """
     Add files to dataset.
 
-    :param scope: The scope name.
-    :param name: The data identifier name.
-    :param files: .
-    :param account: The account owner.
-    :param rse_id: The RSE id for the replicas.
-    :param ignore_duplicate: If True, ignore duplicate entries.
-    :param session: The database session in use.
+    :param scope:              The scope name.
+    :param name:               The data identifier name.
+    :param files:              The list of files.
+    :param account:            The account owner.
+    :param rse_id:             The RSE id for the replicas.
+    :param ignore_duplicate:   If True, ignore duplicate entries.
+    :param session:            The database session in use.
+    :returns:                  List of files attached (excluding the ones that were already attached to the dataset).
     """
     # Get metadata from dataset
     try:
@@ -422,6 +429,7 @@ def __add_files_to_dataset(scope, name, files, account, rse_id, ignore_duplicate
     try:
         contents and session.bulk_insert_mappings(models.DataIdentifierAssociation, contents)
         session.flush()
+        return contents
     except IntegrityError as error:
         if match('.*IntegrityError.*ORA-02291: integrity constraint .*CONTENTS_CHILD_ID_FK.*violated - parent key not found.*', error.args[0]) \
                 or match('.*IntegrityError.*1452.*Cannot add or update a child row: a foreign key constraint fails.*', error.args[0]) \
@@ -543,10 +551,10 @@ def attach_dids_to_dids(attachments, account, ignore_duplicate=False, session=No
     :param ignore_duplicate: If True, ignore duplicate entries.
     :param session: The database session in use.
     """
-    parent_did_condition = list()
     parent_dids = list()
     for attachment in attachments:
         try:
+            cont = []
             parent_did = session.query(models.DataIdentifier).filter_by(scope=attachment['scope'], name=attachment['name']).\
                 with_hint(models.DataIdentifier, "INDEX(DIDS DIDS_PK)", 'oracle').\
                 one()
@@ -567,11 +575,11 @@ def attach_dids_to_dids(attachments, account, ignore_duplicate=False, session=No
                 raise exception.UnsupportedOperation("Data identifier '%(scope)s:%(name)s' is closed" % attachment)
 
             elif parent_did.did_type == DIDType.DATASET:
-                __add_files_to_dataset(scope=attachment['scope'], name=attachment['name'],
-                                       files=attachment['dids'], account=account,
-                                       ignore_duplicate=ignore_duplicate,
-                                       rse_id=attachment.get('rse_id'),
-                                       session=session)
+                cont = __add_files_to_dataset(scope=attachment['scope'], name=attachment['name'],
+                                              files=attachment['dids'], account=account,
+                                              ignore_duplicate=ignore_duplicate,
+                                              rse_id=attachment.get('rse_id'),
+                                              session=session)
 
             elif parent_did.did_type == DIDType.CONTAINER:
                 __add_collections_to_container(scope=attachment['scope'],
@@ -579,16 +587,19 @@ def attach_dids_to_dids(attachments, account, ignore_duplicate=False, session=No
                                                collections=attachment['dids'],
                                                account=account, session=session)
 
-            parent_did_condition.append(and_(models.DataIdentifier.scope == parent_did.scope,
-                                             models.DataIdentifier.name == parent_did.name))
-
-            parent_dids.append({'scope': parent_did.scope,
-                                'name': parent_did.name,
-                                'rule_evaluation_action': DIDReEvaluation.ATTACH})
+            if cont:
+                # cont contains the parent of the files and is only filled if the files does not exist yet
+                parent_dids.append({'scope': parent_did.scope,
+                                    'name': parent_did.name,
+                                    'rule_evaluation_action': DIDReEvaluation.ATTACH})
         except NoResultFound:
             raise exception.DataIdentifierNotFound("Data identifier '%s:%s' not found" % (attachment['scope'], attachment['name']))
 
-        session.bulk_insert_mappings(models.UpdatedDID, parent_dids)
+    # Remove all duplicated dictionnaries from the list
+    # (convert the list of dictionaries into a list of tuple, then to a set of tuple
+    # to remove duplicates, then back to a list of unique dictionaries)
+    parent_dids = [dict(tup) for tup in set(tuple(dictionary.items()) for dictionary in parent_dids)]
+    session.bulk_insert_mappings(models.UpdatedDID, parent_dids)
 
 
 @transactional_session
@@ -612,7 +623,7 @@ def delete_dids(dids, account, expire_rules=False, session=None, logger=logging.
     metadata_to_delete = []
     file_content_clause = []
 
-    archive_dids = config_core.get('undertaker', 'archive_dids', default=False, session=session)
+    archive_dids = config_core.get('deletion', 'archive_dids', default=False, session=session)
 
     for did in dids:
         logger(logging.INFO, 'Removing did %(scope)s:%(name)s (%(did_type)s)' % did)
@@ -637,7 +648,8 @@ def delete_dids(dids, account, expire_rules=False, session=None, logger=logging.
             not_purge_replicas.append((did['scope'], did['name']))
 
             # Archive content
-            # Disable for postgres
+        archive_content = config_core.get('deletion', 'archive_content', default=False, session=session)
+        if archive_content:
             insert_content_history(content_clause=[and_(models.DataIdentifierAssociation.scope == did['scope'],
                                                         models.DataIdentifierAssociation.name == did['name'])],
                                    did_created_at=did.get('created_at'),
@@ -1214,9 +1226,6 @@ def get_did(scope, name, dynamic=False, session=None):
         else:
             if dynamic:
                 bytes_, length, events = __resolve_bytes_length_events_did(scope=scope, name=name, session=session)
-                # replace None value for bytes with zero
-                if bytes_ is None:
-                    bytes_ = 0
             else:
                 bytes_, length = result.bytes, result.length
             return {'scope': result.scope, 'name': result.name, 'type': result.did_type,
@@ -1275,7 +1284,7 @@ def get_files(files, session=None):
 def set_metadata(scope, name, key, value, did_type=None, did=None,
                  recursive=False, session=None):
     """
-    Add metadata to data identifier.
+    Add single metadata to a data identifier.
 
     :param scope: The scope name.
     :param name: The data identifier name.
@@ -1291,7 +1300,7 @@ def set_metadata(scope, name, key, value, did_type=None, did=None,
 @transactional_session
 def set_metadata_bulk(scope, name, meta, recursive=False, session=None):
     """
-    Add metadata to data identifier.
+    Add metadata to a data identifier.
 
     :param scope: The scope name.
     :param name: The data identifier name.
@@ -1300,6 +1309,20 @@ def set_metadata_bulk(scope, name, meta, recursive=False, session=None):
     :param session: The database session in use.
     """
     did_meta_plugins.set_metadata_bulk(scope=scope, name=name, meta=meta, recursive=recursive, session=session)
+
+
+@transactional_session
+def set_dids_metadata_bulk(dids, recursive=False, session=None):
+    """
+    Add metadata to a list of data identifiers.
+
+    :param dids: A list of dids including metadata.
+    :param recursive: Option to propagate the metadata change to content.
+    :param session: The database session in use.
+    """
+
+    for did in dids:
+        did_meta_plugins.set_metadata_bulk(scope=did['scope'], name=did['name'], meta=did['meta'], recursive=recursive, session=session)
 
 
 @read_session
@@ -1487,7 +1510,7 @@ def set_status(scope, name, session=None, **kwargs):
 
 @stream_session
 def list_dids(scope, filters, did_type='collection', ignore_case=False, limit=None,
-              offset=None, long=False, recursive=False, session=None):
+              offset=None, long=False, recursive=False, ignore_dids=None, session=None):
     """
     Search data identifiers
 
@@ -1500,108 +1523,84 @@ def list_dids(scope, filters, did_type='collection', ignore_case=False, limit=No
     :param long: Long format option to display more information for each DID.
     :param session: The database session in use.
     :param recursive: Recursively list DIDs content.
+    :param ignore_dids: List of DIDs to refrain from yielding.
     """
-    types = ['all', 'collection', 'container', 'dataset', 'file']
-    if did_type not in types:
-        raise exception.UnsupportedOperation("Valid type are: %(types)s" % locals())
+    if not ignore_dids:
+        ignore_dids = set()
 
-    query = session.query(models.DataIdentifier.scope,
-                          models.DataIdentifier.name,
-                          models.DataIdentifier.did_type,
-                          models.DataIdentifier.bytes,
-                          models.DataIdentifier.length).\
-        filter(models.DataIdentifier.scope == scope)
+    # mapping for semantic <type> to a (set of) recognised DIDType(s).
+    type_to_did_type_mapping = {
+        'all': [DIDType.CONTAINER, DIDType.DATASET, DIDType.FILE],
+        'collection': [DIDType.CONTAINER, DIDType.DATASET],
+        'container': [DIDType.CONTAINER],
+        'dataset': [DIDType.DATASET],
+        'file': [DIDType.FILE]
+    }
 
-    # Exclude suppressed dids
-    query = query.filter(models.DataIdentifier.suppressed != true())
+    # backwards compatability for filters as single {}.
+    if isinstance(filters, dict):
+        filters = [filters]
 
-    if did_type == 'all':
-        query = query.filter(or_(models.DataIdentifier.did_type == DIDType.CONTAINER,
-                                 models.DataIdentifier.did_type == DIDType.DATASET,
-                                 models.DataIdentifier.did_type == DIDType.FILE))
-    elif did_type.lower() == 'collection':
-        query = query.filter(or_(models.DataIdentifier.did_type == DIDType.CONTAINER,
-                                 models.DataIdentifier.did_type == DIDType.DATASET))
-    elif did_type.lower() == 'container':
-        query = query.filter(models.DataIdentifier.did_type == DIDType.CONTAINER)
-    elif did_type.lower() == 'dataset':
-        query = query.filter(models.DataIdentifier.did_type == DIDType.DATASET)
-    elif did_type.lower() == 'file':
-        query = query.filter(models.DataIdentifier.did_type == DIDType.FILE)
-
-    for (k, v) in filters.items():
-
-        if k not in ['created_before', 'created_after', 'length.gt', 'length.lt', 'length.lte', 'length.gte', 'length'] \
-           and not hasattr(models.DataIdentifier, k):
-            raise exception.KeyNotFound(k)
-
-        if isinstance(v, string_types) and ('*' in v or '%' in v):
-            if v in ('*', '%', u'*', u'%'):
-                continue
-            if session.bind.dialect.name == 'postgresql':
-                query = query.filter(getattr(models.DataIdentifier, k).
-                                     like(v.replace('*', '%').replace('_', r'\_'),
-                                          escape='\\'))
-            else:
-                query = query.filter(getattr(models.DataIdentifier, k).
-                                     like(v.replace('*', '%').replace('_', r'\_'), escape='\\'))
-        elif k == 'created_before':
-            created_before = str_to_date(v)
-            query = query.filter(models.DataIdentifier.created_at <= created_before)
-        elif k == 'created_after':
-            created_after = str_to_date(v)
-            query = query.filter(models.DataIdentifier.created_at >= created_after)
-        elif k == 'guid':
-            query = query.filter_by(guid=v).\
-                with_hint(models.ReplicaLock, "INDEX(DIDS_GUIDS_IDX)", 'oracle')
-        elif k == 'length.gt':
-            query = query.filter(models.DataIdentifier.length > v)
-        elif k == 'length.lt':
-            query = query.filter(models.DataIdentifier.length < v)
-        elif k == 'length.gte':
-            query = query.filter(models.DataIdentifier.length >= v)
-        elif k == 'length.lte':
-            query = query.filter(models.DataIdentifier.length <= v)
-        elif k == 'length':
-            query = query.filter(models.DataIdentifier.length == v)
+    # for each or_group, make sure there is a mapped "did_type" filter.
+    # if type maps to many DIDTypes, the corresponding or_group will be copied the required number of times to satisfy all the logical possibilities.
+    filters_tmp = []
+    for or_group in filters:
+        if 'type' not in or_group:
+            or_group_type = did_type.lower()
         else:
-            query = query.filter(getattr(models.DataIdentifier, k) == v)
+            or_group_type = or_group.pop('type').lower()
+        if or_group_type not in type_to_did_type_mapping.keys():
+            raise exception.UnsupportedOperation('{} is not a valid type. Valid types are {}'.format(or_group_type, type_to_did_type_mapping.keys()))
 
-    if 'name' in filters:
-        if '*' in filters['name']:
-            query = query.\
-                with_hint(models.DataIdentifier, "NO_INDEX(dids(SCOPE,NAME))", 'oracle')
-        else:
-            query = query.\
-                with_hint(models.DataIdentifier, "INDEX(DIDS DIDS_PK)", 'oracle')
+        for mapped_did_type in type_to_did_type_mapping[or_group_type]:
+            or_group['did_type'] = mapped_did_type
+            filters_tmp.append(or_group.copy())
+    filters = filters_tmp
+
+    # instantiate fe and create sqla query
+    fe = FilterEngine(filters, model_class=models.DataIdentifier)
+    query = fe.create_sqla_query(
+        additional_model_attributes=[
+            models.DataIdentifier.scope,
+            models.DataIdentifier.name,
+            models.DataIdentifier.did_type,
+            models.DataIdentifier.bytes,
+            models.DataIdentifier.length
+        ], additional_filters=[
+            (models.DataIdentifier.scope, operator.eq, scope),
+            (models.DataIdentifier.suppressed, operator.ne, true()),
+        ]
+    )
 
     if limit:
         query = query.limit(limit)
-
     if recursive:
-        # Get attachted DIDs and save in list because query has to be finished before starting a new one in the recursion
+        # Get attached DIDs and save in list because query has to be finished before starting a new one in the recursion
         collections_content = []
-        parent_scope = scope
-        for scope, name, type_, bytes_, length in query.yield_per(100):
-            if (type_ == DIDType.CONTAINER or type_ == DIDType.DATASET):
-                collections_content += [did for did in list_content(scope=scope, name=name)]
+        for did in query.yield_per(100):
+            if (did.did_type == DIDType.CONTAINER or did.did_type == DIDType.DATASET):
+                collections_content += [d for d in list_content(scope=did.scope, name=did.name)]
 
-        # List DIDs again to use filter
+        # Replace any name filtering with recursed DID names.
         for did in collections_content:
-            filters['name'] = did['name']
-            for result in list_dids(scope=did['scope'], filters=filters, recursive=True, did_type=did_type, limit=limit, offset=offset, long=long, session=session):
+            for or_group in filters:
+                or_group['name'] = did['name']
+            for result in list_dids(scope=did['scope'], filters=filters, recursive=True, did_type=did_type, limit=limit, offset=offset, long=long, ignore_dids=ignore_dids,
+                                    session=session):
                 yield result
 
     if long:
-        for scope, name, type_, bytes_, length in query.yield_per(5):
-            yield {'scope': scope,
-                   'name': name,
-                   'did_type': type_.name,
-                   'bytes': bytes_,
-                   'length': length}
+        for did in query.yield_per(5):              # don't unpack this as it makes it dependent on query return order!
+            did_full = "{}:{}".format(did.scope, did.name)
+            if did_full not in ignore_dids:         # concatenating results of OR clauses may contain duplicate DIDs if query result sets not mutually exclusive.
+                ignore_dids.add(did_full)
+                yield {'scope': did.scope, 'name': did.name, 'did_type': str(did.did_type), 'bytes': did.bytes, 'length': did.length}
     else:
-        for scope, name, type_, bytes_, length in query.yield_per(5):
-            yield name
+        for did in query.yield_per(5):              # don't unpack this as it makes it dependent on query return order!
+            did_full = "{}:{}".format(did.scope, did.name)
+            if did_full not in ignore_dids:         # concatenating results of OR clauses may contain duplicate DIDs if query result sets not mutually exclusive.
+                ignore_dids.add(did_full)
+                yield did.name
 
 
 @read_session
@@ -1718,7 +1717,7 @@ def create_did_sample(input_scope, input_name, output_scope, output_name, accoun
 
 
 @transactional_session
-def __resolve_bytes_length_events_did(scope, name, session):
+def __resolve_bytes_length_events_did(scope: str, name: str, session: Session) -> Tuple[int, int, int]:
     """
     Resolve bytes, length and events of a did
 
@@ -1742,6 +1741,10 @@ def __resolve_bytes_length_events_did(scope, name, session):
                                                    func.sum(models.DataIdentifierAssociation.events)).\
                 filter_by(scope=scope, name=name).\
                 one()
+
+            bytes_ = bytes_ or 0
+            length = length or 0
+            events = events or 0
         except NoResultFound:
             length, bytes_, events = 0, 0, 0
 
