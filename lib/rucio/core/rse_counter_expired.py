@@ -13,7 +13,7 @@
 # limitations under the License.
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, select
 
 from rucio.core.rse import set_rse_usage
 from rucio.db.sqla import models
@@ -34,14 +34,38 @@ def check_obsolete_replicas(rse_id: str, *, session: "Session") -> None:
     :param session: Database session in use.
     """
 
+    stmt = _select_query(
+    ).where(
+        models.RSEFileAssociation.rse_id == rse_id,
+        models.RSEFileAssociation.tombstone == OBSOLETE
+    )
+    bytes, files = session.execute(stmt).one()
+    set_rse_usage(rse_id, 'obsolete', bytes, None, files, session=session)
+
+
+@transactional_session
+def check_deletable_replicas(rse_id: str, *, session: "Session") -> None:
+    """
+    Get number of files and bytes used by deletable replicas for a given RSE and
+    update RSE usage accordingly. OBSOLETE replicas are included in the calculation.
+
+    :param rse_id: id of the RSE to check.
+    :param session: Database session in use.
+    """
+
+    stmt = _select_query(
+    ).where(
+        models.RSEFileAssociation.rse_id == rse_id,
+        models.RSEFileAssociation.tombstone.is_not(None)
+    )
+    bytes, files = session.execute(stmt).one()
+    set_rse_usage(rse_id, 'deletable', bytes, None, files, session=session)
+
+def _select_query() -> Select:
     query = select(
         func.coalesce(func.sum(models.RSEFileAssociation.bytes), 0).label('bytes'),
         func.count().label('files')
     ).with_hint(
         models.RSEFileAssociation, 'INDEX(replicas REPLICAS_RSE_ID_TOMBSTONE_IDX)', 'oracle'
-    ).where(
-        models.RSEFileAssociation.rse_id == rse_id,
-        models.RSEFileAssociation.tombstone == OBSOLETE
     )
-    bytes, files = session.execute(query).one()
-    set_rse_usage(rse_id, 'obsolete', bytes, None, files, session=session)
+    return query
