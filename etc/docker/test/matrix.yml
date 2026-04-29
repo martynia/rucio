@@ -2,10 +2,10 @@ dists:
   - id: alma9
     allow:
       python:
-        - "3.9"
+        - "3.11"
         - "3.10"
 python:
-  - id: "3.9"
+  - id: "3.11"
     allow:
       suites:
         - remote_dbs
