@@ -178,19 +178,19 @@ jobs:
       - name: Set repository variable
         id: repo
         run: echo "repo=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-      - name: Build Python 3.9 image locally
-        if: needs.runtime_images.outputs.build_locally == 'true' && matrix.cfg.PYTHON == '3.9'
+      - name: Build Python 3.11 image locally
+        if: needs.runtime_images.outputs.build_locally == 'true' && matrix.cfg.PYTHON == '3.11'
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
           context: .
           file: etc/docker/test/runtime.Dockerfile
           target: final
           build-args: |
-            PYTHON=3.9
+            PYTHON=3.11
           push: false
-          tags: ${{ needs.runtime_images.outputs.py39_image }}
+          tags: ${{ needs.runtime_images.outputs.py311_image }}
           outputs: type=docker
-          cache-from: type=registry,ref=ghcr.io/${{ steps.repo.outputs.repo }}/rucio-dev-runtime:py39-buildcache
+          cache-from: type=registry,ref=ghcr.io/${{ steps.repo.outputs.repo }}/rucio-dev-runtime:py311-buildcache
         continue-on-error: false
       - name: Build Python 3.10 image locally
         if: needs.runtime_images.outputs.build_locally == 'true' && matrix.cfg.PYTHON == '3.10'
@@ -212,4 +212,4 @@ jobs:
           PY310_RUNTIME_IMAGE: ${{ needs.runtime_images.outputs.py310_image }}
           BUILD_LOCALLY: ${{ needs.runtime_images.outputs.build_locally }}
         run: |
-          echo '{"matrix": ${{ toJson(matrix.cfg) }}, "runtime_images": {"3.9": "${{ needs.runtime_images.outputs.py39_image }}", "3.10": "${{ needs.runtime_images.outputs.py310_image }}"}, "build_locally": "${{ needs.runtime_images.outputs.build_locally }}" }' | ./tools/test/run_tests.py
+          echo '{"matrix": ${{ toJson(matrix.cfg) }}, "runtime_images": {"3.11": "${{ needs.runtime_images.outputs.py39_image }}", "3.10": "${{ needs.runtime_images.outputs.py310_image }}"}, "build_locally": "${{ needs.runtime_images.outputs.build_locally }}" }' | ./tools/test/run_tests.py
