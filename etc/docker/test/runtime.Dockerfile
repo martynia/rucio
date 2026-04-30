@@ -9,6 +9,7 @@ FROM almalinux:9.1 AS base
     ENV PYTHON_VENV="/opt/venv"
     ENV PATH="${PYTHON_VENV}/bin:${PATH}"
     ENV PYTHON_310_PATCH_VERSION="4"
+    ENV PYTHON_311_PATCH_VERSION="11"
     ENV RUCIO_HOME="/opt/rucio"
 
 FROM base AS oracle-client
@@ -17,17 +18,17 @@ FROM base AS oracle-client
         echo "/usr/lib/oracle/19.12/client64/lib" > /etc/ld.so.conf.d/oracle-instantclient.conf;
 
 FROM base AS python
-    RUN if [ "$PYTHON" == "3.9" ] ; then \
-            dnf install -y epel-release.noarch && \
-            dnf install -y 'dnf-command(config-manager)' && \
-            dnf config-manager --set-enabled crb && \
-            dnf -y update && \
-            dnf -y install boost-python3 python3-pip python3-devel && \
-            dnf remove --assumeyes python3-setuptools && \
-            python3 -m pip --no-cache-dir install --upgrade pip && \
-            python3 -m pip --no-cache-dir install --upgrade setuptools wheel; \
-        elif [ "$PYTHON" -ge "3.10" ] ; then \
+    RUN if [ "$PYTHON" == "3.10" ] ; then \
             PYTHON_VERSION="3.10.${PYTHON_310_PATCH_VERSION}" && \
+            COMPILE_FROM_SOURCE=true; \
+        elif [ "$PYTHON" == "3.11" ] ; then \
+            PYTHON_VERSION="3.11.${PYTHON_311_PATCH_VERSION}" && \
+            COMPILE_FROM_SOURCE=true; \
+        elif [ "$PYTHON" -ge "3.12" ] ; then \
+            PYTHON_VERSION="${PYTHON}.0" && \
+            COMPILE_FROM_SOURCE=true; \
+        fi && \
+        if [ "$COMPILE_FROM_SOURCE" = "true" ] ; then \
             dnf install -y 'dnf-command(config-manager)' && \
             dnf config-manager --enable crb && \
             dnf -y update && \
