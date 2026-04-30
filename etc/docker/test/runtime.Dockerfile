@@ -26,7 +26,7 @@ FROM base AS python
             dnf remove --assumeyes python3-setuptools && \
             python3 -m pip --no-cache-dir install --upgrade pip && \
             python3 -m pip --no-cache-dir install --upgrade setuptools wheel; \
-        elif [ "$PYTHON" == "3.10" ] ; then \
+        elif [ "$PYTHON" -ge "3.10" ] ; then \
             PYTHON_VERSION="3.10.${PYTHON_310_PATCH_VERSION}" && \
             dnf install -y 'dnf-command(config-manager)' && \
             dnf config-manager --enable crb && \
@@ -57,7 +57,7 @@ FROM python AS gfal2
         if [ "$PYTHON" == "3.9" ] ; then \
             dnf -y install gfal2-python3 && \
             cp /usr/lib64/python3.9/site-packages/gfal2.so /usr/lib64/gfal2.so; \
-        elif [ "$PYTHON" == "3.10" ] ; then \
+        elif [ "$PYTHON" -ge "3.10" ] ; then \
             wget https://archives.boost.io/release/1.80.0/source/boost_1_80_0.tar.gz && \
             tar -xvzf boost_1_80_0.tar.gz && \
             cd boost_1_80_0 && \
@@ -81,7 +81,7 @@ FROM python AS mod_wsgi
     RUN if [ "$PYTHON" == "3.9" ] ; then \
             dnf install -y python3-mod_wsgi && \
             cp /usr/lib64/httpd/modules/mod_wsgi_python3.so /usr/lib64/httpd/modules/mod_wsgi.so; \
-        elif [ "$PYTHON" == "3.10" ] ; then \
+        elif [ "$PYTHON" -ge "3.10" ] ; then \
             dnf install -y httpd-devel && \
             curl -sSL https://github.com/GrahamDumpleton/mod_wsgi/archive/4.9.1.tar.gz | tar xzv && \
             cd mod_wsgi-4.9.1 && \
