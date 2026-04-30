@@ -24,9 +24,6 @@ FROM base AS python
         elif [ "$PYTHON" == "3.11" ] ; then \
             PYTHON_VERSION="3.11.${PYTHON_311_PATCH_VERSION}" && \
             COMPILE_FROM_SOURCE=true; \
-        elif [ "$PYTHON" -ge "3.12" ] ; then \
-            PYTHON_VERSION="${PYTHON}.0" && \
-            COMPILE_FROM_SOURCE=true; \
         fi && \
         if [ "$COMPILE_FROM_SOURCE" = "true" ] ; then \
             dnf install -y 'dnf-command(config-manager)' && \
@@ -58,7 +55,7 @@ FROM python AS gfal2
         if [ "$PYTHON" == "3.9" ] ; then \
             dnf -y install gfal2-python3 && \
             cp /usr/lib64/python3.9/site-packages/gfal2.so /usr/lib64/gfal2.so; \
-        elif [ "$PYTHON" -ge "3.10" ] ; then \
+        elif [ "$PYTHON" == "3.10" ] || [ "$PYTHON" == "3.11" ] ; then \
             wget https://archives.boost.io/release/1.80.0/source/boost_1_80_0.tar.gz && \
             tar -xvzf boost_1_80_0.tar.gz && \
             cd boost_1_80_0 && \
@@ -82,7 +79,7 @@ FROM python AS mod_wsgi
     RUN if [ "$PYTHON" == "3.9" ] ; then \
             dnf install -y python3-mod_wsgi && \
             cp /usr/lib64/httpd/modules/mod_wsgi_python3.so /usr/lib64/httpd/modules/mod_wsgi.so; \
-        elif [ "$PYTHON" -ge "3.10" ] ; then \
+        elif [ "$PYTHON" == "3.10" ] || [ "$PYTHON" == "3.11" ] ; then \
             dnf install -y httpd-devel && \
             curl -sSL https://github.com/GrahamDumpleton/mod_wsgi/archive/4.9.1.tar.gz | tar xzv && \
             cd mod_wsgi-4.9.1 && \
