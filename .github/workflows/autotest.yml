@@ -208,8 +208,8 @@ jobs:
         continue-on-error: false
       - name: Run test with cfg
         env:
-          PY39_RUNTIME_IMAGE: ${{ needs.runtime_images.outputs.py39_image }}
+          PY311_RUNTIME_IMAGE: ${{ needs.runtime_images.outputs.py311_image }}
           PY310_RUNTIME_IMAGE: ${{ needs.runtime_images.outputs.py310_image }}
           BUILD_LOCALLY: ${{ needs.runtime_images.outputs.build_locally }}
         run: |
-          echo '{"matrix": ${{ toJson(matrix.cfg) }}, "runtime_images": {"3.11": "${{ needs.runtime_images.outputs.py39_image }}", "3.10": "${{ needs.runtime_images.outputs.py310_image }}"}, "build_locally": "${{ needs.runtime_images.outputs.build_locally }}" }' | ./tools/test/run_tests.py
+          echo '{"matrix": ${{ toJson(matrix.cfg) }}, "runtime_images": {"3.11": "${{ needs.runtime_images.outputs.py311_image }}", "3.10": "${{ needs.runtime_images.outputs.py310_image }}"}, "build_locally": "${{ needs.runtime_images.outputs.build_locally }}" }' | ./tools/test/run_tests.py
