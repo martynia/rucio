@@ -9,6 +9,7 @@ FROM almalinux:9.1 AS base
     ENV PYTHON_VENV="/opt/venv"
     ENV PATH="${PYTHON_VENV}/bin:${PATH}"
     ENV PYTHON_310_PATCH_VERSION="4"
+    ENV PYTHON_311_PATCH_VERSION="11"
     ENV RUCIO_HOME="/opt/rucio"
 
 FROM base AS oracle-client
@@ -17,17 +18,14 @@ FROM base AS oracle-client
         echo "/usr/lib/oracle/19.12/client64/lib" > /etc/ld.so.conf.d/oracle-instantclient.conf;
 
 FROM base AS python
-    RUN if [ "$PYTHON" == "3.9" ] ; then \
-            dnf install -y epel-release.noarch && \
-            dnf install -y 'dnf-command(config-manager)' && \
-            dnf config-manager --set-enabled crb && \
-            dnf -y update && \
-            dnf -y install boost-python3 python3-pip python3-devel && \
-            dnf remove --assumeyes python3-setuptools && \
-            python3 -m pip --no-cache-dir install --upgrade pip && \
-            python3 -m pip --no-cache-dir install --upgrade setuptools wheel; \
-        elif [ "$PYTHON" == "3.10" ] ; then \
+    RUN if [ "$PYTHON" == "3.10" ] ; then \
             PYTHON_VERSION="3.10.${PYTHON_310_PATCH_VERSION}" && \
+            COMPILE_FROM_SOURCE=true; \
+        elif [ "$PYTHON" == "3.11" ] ; then \
+            PYTHON_VERSION="3.11.${PYTHON_311_PATCH_VERSION}" && \
+            COMPILE_FROM_SOURCE=true; \
+        fi && \
+        if [ "$COMPILE_FROM_SOURCE" = "true" ] ; then \
             dnf install -y 'dnf-command(config-manager)' && \
             dnf config-manager --enable crb && \
             dnf -y update && \
@@ -57,11 +55,11 @@ FROM python AS gfal2
         if [ "$PYTHON" == "3.9" ] ; then \
             dnf -y install gfal2-python3 && \
             cp /usr/lib64/python3.9/site-packages/gfal2.so /usr/lib64/gfal2.so; \
-        elif [ "$PYTHON" == "3.10" ] ; then \
+        elif [ "$PYTHON" == "3.10" ] || [ "$PYTHON" == "3.11" ] ; then \
             wget https://archives.boost.io/release/1.80.0/source/boost_1_80_0.tar.gz && \
             tar -xvzf boost_1_80_0.tar.gz && \
             cd boost_1_80_0 && \
-            ./bootstrap.sh --with-libraries=python --with-python=/usr/bin/python3.10 --prefix=/usr --libdir=/usr/local/lib && \
+            ./bootstrap.sh --with-libraries=python --with-python=/usr/bin/python${PYTHON} --prefix=/usr --libdir=/usr/local/lib && \
             ./b2 --with-python --libdir=/usr/local/lib --link=shared && \
             cp /usr/local/src/boost_1_80_0/stage/lib/lib* /usr/lib64/ && \
             dnf install -y git dnf-plugins-core git rpm-build tree which cmake make gcc gcc-c++ && \
@@ -81,7 +79,7 @@ FROM python AS mod_wsgi
     RUN if [ "$PYTHON" == "3.9" ] ; then \
             dnf install -y python3-mod_wsgi && \
             cp /usr/lib64/httpd/modules/mod_wsgi_python3.so /usr/lib64/httpd/modules/mod_wsgi.so; \
-        elif [ "$PYTHON" == "3.10" ] ; then \
+        elif [ "$PYTHON" == "3.10" ] || [ "$PYTHON" == "3.11" ] ; then \
             dnf install -y httpd-devel && \
             curl -sSL https://github.com/GrahamDumpleton/mod_wsgi/archive/4.9.1.tar.gz | tar xzv && \
             cd mod_wsgi-4.9.1 && \

@@ -2,10 +2,10 @@ dists:
   - id: alma9
     allow:
       python:
-        - "3.9"
+        - "3.10"
 python:
-  - "3.9"
   - "3.10"
+  - "3.11"
 suites:
   - id: client
     RDBMS: postgres14

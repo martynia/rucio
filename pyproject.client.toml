@@ -33,7 +33,7 @@ dependencies = [
         'rich',
         'typing_extensions'
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
   {name = "Rucio", email = "rucio-contact@cern.ch"},
 ]
@@ -52,8 +52,8 @@ classifiers = [
   'Natural Language :: English',
   'Programming Language :: Python',
   'Programming Language :: Python :: 3',
-  'Programming Language :: Python :: 3.9',
   'Programming Language :: Python :: 3.10',
+  'Programming Language :: Python :: 3.11',
 ]
 
 [project.optional-dependencies]

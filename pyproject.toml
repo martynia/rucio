@@ -25,7 +25,7 @@ dependencies = [
   'python-magic<=0.4.27',
   'paramiko<=4.0.0',
   'boto3<=1.40.64',
-  'sqlalchemy<=2.0.44',
+  'sqlalchemy==2.1.0b2',
   'alembic<=1.16.5',
   'pymemcache<=4.0.0',
   'python-dateutil<=2.9.0.post0',
@@ -38,7 +38,7 @@ dependencies = [
   'oic<=1.7.0',
   'prometheus_client<=0.23.1',
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
   {name = "Rucio", email = "rucio-contact@cern.ch"},
 ]
@@ -56,8 +56,8 @@ classifiers = [
   'Natural Language :: English',
   'Programming Language :: Python',
   'Programming Language :: Python :: 3',
-  'Programming Language :: Python :: 3.9',
   'Programming Language :: Python :: 3.10',
+  'Programming Language :: Python :: 3.11',
   'Environment :: No Input/Output (Daemon)',
 ]
 
@@ -120,7 +120,7 @@ exclude_also = [
 
 [tool.ruff]
 line-length = 256
-target-version = "py39"
+target-version = "py310"
 
 extend-include = [
     "bin/*",

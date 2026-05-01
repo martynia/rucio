@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   runtime_images:
-    name: Build Python 3.9 Runtime Image
+    name: Build Python 3.10 Runtime Image
     uses: ./.github/workflows/runtime_images.yml
     permissions:
       contents: read
@@ -121,7 +121,7 @@ jobs:
           build-args: |
             PYTHON=3.9
           push: false
-          tags: ${{ needs.runtime_images.outputs.py39_image }}
+          tags: ${{ needs.runtime_images.outputs.py310_image }}
           outputs: type=docker
         continue-on-error: false
       - name: Pull all required images
@@ -133,7 +133,7 @@ jobs:
         shell: bash
         run: |
           docker image ls
-          sed -i 's;image: .*rucio-dev.*;image: ${{ needs.runtime_images.outputs.py39_image }};' \
+          sed -i 's;image: .*rucio-dev.*;image: ${{ needs.runtime_images.outputs.py310_image }};' \
               $GITHUB_WORKSPACE/dev/rucio/etc/docker/dev/docker-compose.yml
       - name: Start containers
         run: |
